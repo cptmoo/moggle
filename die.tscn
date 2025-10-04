@@ -1,0 +1,23 @@
+[gd_scene load_steps=3 format=3 uid="uid://6ftsmxaxxa5g"]
+
+[ext_resource type="Script" uid="uid://bkpjhfxb1a6n5" path="res://die.gd" id="1_fl3nv"]
+[ext_resource type="FontFile" uid="uid://b7xw2nwfe1blf" path="res://assets/fonts/Poppins-Black.otf" id="2_gxo0y"]
+
+[node name="Die" type="Node2D"]
+script = ExtResource("1_fl3nv")
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LetterDisplay" type="Label" parent="CenterContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.17254902, 1, 1)
+theme_override_fonts/font = ExtResource("2_gxo0y")
+theme_override_font_sizes/font_size = 23
+text = "A"
+horizontal_alignment = 1
+vertical_alignment = 1
