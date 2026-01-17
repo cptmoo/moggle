@@ -24,6 +24,19 @@ const DICE = [
   ["D", "E", "I", "L", "R", "X"]
 ];
 
+// ---- Trie helpers for solver ----
+function makeNode() {
+  return { next: Object.create(null), end: false };
+}
+function trieInsert(root, word) {
+  let node = root;
+  for (let i = 0; i < word.length; i++) {
+    const ch = word[i];
+    node = node.next[ch] || (node.next[ch] = makeNode());
+  }
+  node.end = true;
+}
+
 createApp({
   data() {
     return {
@@ -39,15 +52,22 @@ createApp({
       dictReady: false,
       dict: new Set(),
 
-      // Official slot + timer
+      // Solver structures
+      trieRoot: makeNode(),
+      solving: false,
+      showSolutions: false,
+      allSolutions: [],     // UPPERCASE strings
+      missedSolutions: [],  // UPPERCASE strings
+
+      // Timer
       gameLengthSec: 180,
       timeLeftSec: 180,
       timerId: null,
       gameOver: false,
 
-      // Mode / seed info (for display/debug)
-      modeLabel: "",          // "Random" or "Official 10:05"
-      seedLabel: "",          // seed string used
+      // Mode / seed info
+      modeLabel: "",     // "Random" or "Official 10:05"
+      seedLabel: "",
 
       // Selection
       selecting: false,
@@ -71,12 +91,12 @@ createApp({
       cutouts: [],
       pathPoints: [],
 
-      // Mask tuning (your preferred)
+      // Mask tuning
       maskInset: 1,
       maskRx: 14,
       maskRy: 14,
 
-      // Clock display tick
+      // Clock tick (for button label)
       now: new Date(),
       clockId: null
     };
@@ -93,12 +113,7 @@ createApp({
     score() {
       let total = 0;
       for (const w of this.foundWords) {
-        const n = w.length;
-        if (n === 4) total += 1;
-        else if (n === 5) total += 2;
-        else if (n === 6) total += 3;
-        else if (n === 7) total += 5;
-        else if (n >= 8) total += 11;
+        total += this.scoreWord(w.length);
       }
       return total;
     },
@@ -115,15 +130,14 @@ createApp({
 
     statusText() {
       if (!this.dictReady) return "Loading dictionary…";
-      if (this.gameOver) return "Time!";
-      return this.modeLabel ? this.modeLabel : "";
+        // Always show the mode label if we have one (even after gameOver)
+        return this.modeLabel ? this.modeLabel : "";
     },
 
     canInteract() {
       return this.dictReady && !this.gameOver;
     },
 
-    // Current 5-minute slot label, e.g. "10:05"
     currentSlotLabel() {
       const d = this.now;
       const hh = String(d.getHours()).padStart(2, "0");
@@ -139,21 +153,15 @@ createApp({
     window.addEventListener("resize", this.onResize);
     window.addEventListener("orientationchange", this.onResize);
 
-    // Keep a lightweight clock tick so the button label updates
     this.clockId = setInterval(() => {
       this.now = new Date();
     }, 1000);
 
     await this.loadDictionary();
 
-    // Default: start an official game immediately (nice family flow)
-    // NOPE. 
-    //this.playOfficial();
-    // INSTEAD, I will play random and let everyone join at the same time. 
+    // Default: start with random (as you wanted)
     this.playRandom();
 
-
-    // Layout settle pass
     setTimeout(() => {
       this.rebuildGeometry();
       this.refreshPathLine();
@@ -177,10 +185,21 @@ createApp({
   },
 
   methods: {
-    // ---------- dictionary ----------
+    // ---------- scoring ----------
+    scoreWord(len) {
+      if (len === 4) return 1;
+      if (len === 5) return 2;
+      if (len === 6) return 3;
+      if (len === 7) return 5;
+      if (len >= 8) return 11;
+      return 0;
+    },
+
+    // ---------- dictionary + trie ----------
     async loadDictionary() {
       this.dictReady = false;
       this.dict = new Set();
+      this.trieRoot = makeNode();
 
       try {
         const res = await fetch("words.txt", { cache: "no-cache" });
@@ -188,14 +207,19 @@ createApp({
         const text = await res.text();
 
         const set = new Set();
+        const root = makeNode();
+
         for (const line of text.split(/\r?\n/)) {
           const w = line.trim().toLowerCase();
           if (!w) continue;
           if (!/^[a-z]+$/.test(w)) continue;
+          if (w.length < 4) continue; // minimum for this game
           set.add(w);
+          trieInsert(root, w);
         }
 
         this.dict = set;
+        this.trieRoot = root;
         this.dictReady = true;
       } catch (err) {
         console.warn(err);
@@ -203,19 +227,16 @@ createApp({
       }
     },
 
-    // ---------- seeded RNG (deterministic across devices) ----------
-    // 32-bit FNV-1a hash -> integer seed
+    // ---------- seeded RNG ----------
     fnv1a32(str) {
       let h = 0x811c9dc5;
       for (let i = 0; i < str.length; i++) {
         h ^= str.charCodeAt(i);
-        // h *= 16777619 (with overflow)
         h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
       }
       return h >>> 0;
     },
 
-    // Mulberry32 PRNG
     mulberry32(seed) {
       let a = seed >>> 0;
       return function () {
@@ -250,19 +271,22 @@ createApp({
       }
     },
 
-    endGame() {
+    async endGame() {
       this.stopTimer();
       this.gameOver = true;
       this.clearSelection();
-      this.showMessage(`Time’s up! Final score: ${this.score}`, "info");
+      const label = this.modeLabel ? this.modeLabel : "Game";
+      this.showMessage(`Time’s up! Final score: ${this.score} · ${label}`, "info");
+
+      // Run solver automatically at end
+      await this.solveBoard();
+      this.showSolutions = true;
     },
 
-    // ---------- game selection (official vs random) ----------
+    // ---------- game selection ----------
     playOfficial() {
       if (!this.dictReady) return;
 
-      // Use UTC in the seed so everyone worldwide is consistent if needed.
-      // If you want "local time for family only", swap to local fields.
       const d = new Date();
       const yyyy = d.getUTCFullYear();
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -282,9 +306,8 @@ createApp({
     playRandom() {
       if (!this.dictReady) return;
 
-      // Random seed based on crypto if available, else Date
       let seedString = `moggle|random|${Date.now()}`;
-      if (crypto && crypto.getRandomValues) {
+      if (typeof crypto !== "undefined" && crypto.getRandomValues) {
         const a = new Uint32Array(2);
         crypto.getRandomValues(a);
         seedString = `moggle|random|${a[0]}-${a[1]}-${Date.now()}`;
@@ -302,24 +325,24 @@ createApp({
       this.foundSet = new Set();
       this.clearMessage();
 
-      // Build deterministic RNG
+      this.showSolutions = false;
+      this.allSolutions = [];
+      this.missedSolutions = [];
+
       const seed = this.fnv1a32(seedString);
       const rand = this.mulberry32(seed);
 
-      // Need 16 dice
       if (!Array.isArray(DICE) || DICE.length !== 16) {
         this.showMessage("Paste your 16 dice into DICE in app.js.", "bad");
         return;
       }
 
-      // Deterministic shuffle of dice indices
       const idx = [...Array(16).keys()];
       for (let i = idx.length - 1; i > 0; i--) {
         const j = Math.floor(rand() * (i + 1));
         [idx[i], idx[j]] = [idx[j], idx[i]];
       }
 
-      // Deterministic face selection
       const rolled = idx.map(i => {
         const die = DICE[i];
         const face = die[Math.floor(rand() * die.length)];
@@ -334,13 +357,117 @@ createApp({
       }
       this.grid = g;
 
-      // Start the 3-minute countdown for this game
       this.startTimer();
 
       this.$nextTick(() => {
         this.rebuildGeometry();
         this.refreshPathLine();
       });
+    },
+
+    // ---------- solver ----------
+    async solveBoard() {
+      if (!this.dictReady) return;
+      if (this.solving) return;
+
+      this.solving = true;
+
+      // Let UI update (so “solving…” can render on slower devices)
+      await new Promise(requestAnimationFrame);
+
+      const root = this.trieRoot;
+
+      // Precompute neighbours for 16 cells
+      const neighbours = Array.from({ length: 16 }, () => []);
+      const id = (r, c) => r * 4 + c;
+
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 4; c++) {
+          const from = id(r, c);
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              if (dr === 0 && dc === 0) continue;
+              const rr = r + dr, cc = c + dc;
+              if (rr >= 0 && rr < 4 && cc >= 0 && cc < 4) {
+                neighbours[from].push(id(rr, cc));
+              }
+            }
+          }
+        }
+      }
+
+      // Flatten tiles and normalise to lowercase strings: 'a'..'z' or 'qu'
+      const tiles = [];
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 4; c++) {
+          const t = this.grid[r][c];
+          tiles.push((t === "Qu" || t === "QU") ? "qu" : String(t).toLowerCase());
+        }
+      }
+
+      const found = new Set();
+      const visited = new Array(16).fill(false);
+
+      const stepNode = (node, tileStr) => {
+        // tileStr is 'qu' or 'a'...'z'
+        if (tileStr === "qu") {
+          const n1 = node.next["q"];
+          if (!n1) return null;
+          const n2 = n1.next["u"];
+          if (!n2) return null;
+          return n2;
+        } else {
+          return node.next[tileStr] || null;
+        }
+      };
+
+      const appendStr = (word, tileStr) => word + (tileStr === "qu" ? "qu" : tileStr);
+
+      const dfs = (pos, node, word) => {
+        visited[pos] = true;
+
+        if (node.end && word.length >= 4) {
+          found.add(word);
+        }
+
+        for (const nb of neighbours[pos]) {
+          if (visited[nb]) continue;
+
+          const tileStr = tiles[nb];
+          const nextNode = stepNode(node, tileStr);
+          if (!nextNode) continue;
+
+          dfs(nb, nextNode, appendStr(word, tileStr));
+        }
+
+        visited[pos] = false;
+      };
+
+      for (let start = 0; start < 16; start++) {
+        const tileStr = tiles[start];
+        const firstNode = stepNode(root, tileStr);
+        if (!firstNode) continue;
+        dfs(start, firstNode, appendStr("", tileStr));
+      }
+
+      // Sort by: score desc, length desc, alpha
+      const list = Array.from(found);
+      list.sort((a, b) => {
+        const sa = this.scoreWord(a.length);
+        const sb = this.scoreWord(b.length);
+        if (sb !== sa) return sb - sa;
+        if (b.length !== a.length) return b.length - a.length;
+        return a.localeCompare(b);
+      });
+
+      const allUpper = list.map(w => w.toUpperCase());
+      const foundByPlayer = new Set(this.foundWords.map(w => w.toLowerCase()));
+      const missedUpper = list.filter(w => !foundByPlayer.has(w)).map(w => w.toUpperCase());
+
+      this.allSolutions = allUpper;
+      this.missedSolutions = missedUpper;
+
+      this.solving = false;
     },
 
     // ---------- selection helpers ----------
@@ -566,7 +693,7 @@ createApp({
       this.clearSelection();
     },
 
-    // ---------- submission / validation ----------
+    // ---------- submission ----------
     submitWord() {
       if (!this.canInteract) return;
 
@@ -708,6 +835,29 @@ createApp({
           <ul v-else class="found-list">
             <li v-for="w in foundWords" :key="w" class="found-item">{{ w }}</li>
           </ul>
+
+          <div v-if="gameOver" style="margin-top: 12px;">
+            <button class="btn" type="button" @click="showSolutions = !showSolutions" :disabled="solving">
+              {{ solving ? "Solving…" : (showSolutions ? "Hide solutions" : "Show solutions") }}
+            </button>
+
+            <div v-if="showSolutions" style="margin-top: 10px;">
+              <div style="font-weight: 900; margin-bottom: 6px;">
+                Missed ({{ missedSolutions.length }})
+              </div>
+              <div v-if="missedSolutions.length === 0" class="found-empty">None — nice!</div>
+              <ul v-else class="found-list">
+                <li v-for="w in missedSolutions" :key="'m'+w" class="found-item">{{ w }}</li>
+              </ul>
+
+              <div style="font-weight: 900; margin: 12px 0 6px;">
+                All solutions ({{ allSolutions.length }})
+              </div>
+              <ul class="found-list">
+                <li v-for="w in allSolutions" :key="'a'+w" class="found-item">{{ w }}</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
     </main>
