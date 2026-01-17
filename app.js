@@ -60,8 +60,9 @@ createApp({
       missedSolutions: [],  // UPPERCASE strings
 
       // Timer
-      gameLengthSec: 10
-      ,
+      gameLengthSec: 10,
+      gameLengthSecRegular: 10,
+      gameLengthSecLongest: 8,
       timeLeftSec: 180,
       timerId: null,
       gameOver: false,
@@ -119,6 +120,17 @@ createApp({
       return total;
     },
 
+    displayScore() {
+    // Longest-word mode: show length of longest word found
+    if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
+        const w = this.longestFoundWord();
+        return w ? w.length : 0;
+    }
+
+    // Normal modes: show points
+    return this.score;
+    },
+
     polylinePointsAttr() {
       return this.pathPoints.map(p => `${p.x},${p.y}`).join(" ");
     },
@@ -145,16 +157,59 @@ createApp({
       const mm = String(Math.floor(d.getMinutes() / 5) * 5).padStart(2, "0");
       return `${hh}:${mm}`;
     }, 
+    currentSlotLabel2() {
+    const d = this.now;
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(Math.floor(d.getMinutes() / 2) * 2).padStart(2, "0");
+    return `${hh}:${mm}`;
+    },
     missedCount() {
       return this.missedSolutions.length;
     },
     resultsText() {
-        if (!this.gameOver) return "";
-        const label = this.modeLabel ? this.modeLabel : "Game";
-        const pts = this.score;
-        const words = this.foundWords.length;
-        return `${label} · ${pts} pts · ${words} words`;
+    if (!this.gameOver) return "";
+
+    const label = this.modeLabel ? this.modeLabel : "Game";
+
+    // Longest-word mode
+    if (label.startsWith("Longest")) {
+        const w = this.longestFoundWord();
+        if (!w) return `${label} · No valid word`;
+
+        return `${label} · ${w} · ${w.length} letters`;
     }
+
+    // Normal scoring mode
+    const pts = this.score;
+    const words = this.foundWords.length;
+    return `${label} · ${pts} pts · ${words} words`;
+    },
+    longestSolutionWord() {
+        if (!this.allSolutions || this.allSolutions.length === 0) return null;
+
+        let best = this.allSolutions[0];
+        for (const w of this.allSolutions) {
+            if (w.length > best.length) best = w;
+        }
+        return best;
+    },
+
+    solutionsButtonText() {
+        if (this.solving) return "Solving…";
+        if (this.showSolutions) return "Hide solutions";
+
+        // Longest-word mode
+        if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
+            const w = this.longestSolutionWord;
+            if (!w) return "Show solutions (no valid word)";
+            return "Show solutions (" + w.length + " letters)";
+        }
+
+        // Normal modes
+        return "Show solutions (" + this.missedSolutions.length + " missed)";
+    }
+
+
   },
 
   async mounted() {
@@ -309,6 +364,8 @@ createApp({
     playOfficial() {
       if (!this.dictReady) return;
 
+      this.gameLengthSec = this.gameLengthSecRegular;
+
       const d = new Date();
       const yyyy = d.getUTCFullYear();
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -325,8 +382,45 @@ createApp({
       this.startNewBoardFromSeed(seedString);
     },
 
+    playOfficialLongest() {
+        if (!this.dictReady) return;
+
+        // 1 minute round
+        this.gameLengthSec = this.gameLengthSecLongest;
+
+        // Seed changes every 2 minutes (UTC)
+        const d = new Date();
+        const yyyy = d.getUTCFullYear();
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(d.getUTCDate()).padStart(2, "0");
+        const hh = String(d.getUTCHours()).padStart(2, "0");
+        const mins2 = String(Math.floor(d.getUTCMinutes() / 2) * 2).padStart(2, "0");
+
+        const slot = `${yyyy}-${mm}-${dd} ${hh}:${mins2}Z`;
+        const seedString = `moggle|official-longest|${slot}`;
+
+        this.modeLabel = `Longest ${this.currentSlotLabel2}`;
+        this.seedLabel = seedString;
+
+        this.startNewBoardFromSeed(seedString);
+    },
+
+    longestFoundWord() {
+    if (this.foundWords.length === 0) return null;
+
+    let best = this.foundWords[0];
+    for (const w of this.foundWords) {
+        if (w.length > best.length) best = w;
+    }
+    return best;
+    },
+
+
+
     playRandom() {
       if (!this.dictReady) return;
+
+      this.gameLengthSec = this.gameLengthSecRegular;
 
       let seedString = `moggle|random|${Date.now()}`;
       if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -750,7 +844,7 @@ createApp({
         <div class="brand">
           <div class="title">Moggle</div>
           <div class="subtitle">
-            Score: <span class="score">{{ score }}</span>
+            Score: <span class="score">{{ displayScore }}</span>
             <span v-if="statusText" class="status"> · {{ statusText }}</span>
           </div>
         </div>
@@ -758,10 +852,13 @@ createApp({
         <div class="timerbar">
           <div class="time">{{ timeText }}</div>
           <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
-            Play {{ currentSlotLabel }}
+            Official {{ currentSlotLabel }}
           </button>
           <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
             Play random
+          </button>
+          <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
+            Longest {{ currentSlotLabel2 }}
           </button>
         </div>
       </header>
@@ -869,14 +966,9 @@ createApp({
             <div v-if="gameOver" style="margin-top: 12px;">
 
             <button class="btn" type="button" @click="showSolutions = !showSolutions" :disabled="solving">
-            {{ solving
-                ? "Solving…"
-                : (showSolutions
-                    ? "Hide solutions"
-                    : "Show solutions (" + missedCount + " missed)"
-                )
-            }}
+            {{ solutionsButtonText }}
             </button>
+
 
 
             <div v-if="showSolutions" style="margin-top: 10px;">
