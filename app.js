@@ -60,9 +60,9 @@ createApp({
       missedSolutions: [],  // UPPERCASE strings
 
       // Timer
-      gameLengthSec: 10,
-      gameLengthSecRegular: 10,
-      gameLengthSecLongest: 8,
+      gameLengthSec: 180,
+      gameLengthSecRegular: 180,
+      gameLengthSecLongest: 60,
       timeLeftSec: 180,
       timerId: null,
       gameOver: false,
