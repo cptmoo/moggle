@@ -1,14 +1,46 @@
 const { createApp } = Vue;
 
+/**
+ * Paste your 16 dice here.
+ * Format: 16 items, each item is an array of faces (strings).
+ * Use "Qu" (capital Q, lower u) for Qu faces if you want it displayed nicely.
+ *
+ * Example die: ["A", "A", "E", "E", "G", "N"]
+ */
+const DICE = [
+  // TODO: replace with your real 16 dice
+  ["A", "A", "E", "E", "G", "N"],
+  ["E", "L", "R", "T", "T", "Y"],
+  ["A", "O", "O", "T", "T", "W"],
+  ["A", "B", "B", "J", "O", "O"],
+  ["E", "H", "R", "T", "V", "W"],
+  ["C", "I", "M", "O", "T", "U"],
+  ["D", "I", "S", "T", "T", "Y"],
+  ["E", "I", "O", "S", "S", "T"],
+  ["D", "E", "L", "R", "V", "Y"],
+  ["A", "C", "H", "O", "P", "S"],
+  ["H", "I", "M", "N", "Qu", "U"], // example with Qu
+  ["E", "E", "I", "N", "S", "U"],
+  ["E", "E", "G", "H", "N", "W"],
+  ["A", "F", "F", "K", "P", "S"],
+  ["H", "L", "N", "N", "R", "Z"],
+  ["D", "E", "I", "L", "R", "X"]
+];
+
 createApp({
   data() {
     return {
+      // Board (strings, e.g. "A", "Qu")
       grid: [
         ["T", "A", "P", "E"],
         ["R", "S", "L", "N"],
         ["O", "I", "D", "M"],
         ["C", "H", "U", "G"]
       ],
+
+      // Dictionary
+      dictReady: false,
+      dict: new Set(), // lowercase words
 
       // Selection
       selecting: false,
@@ -20,39 +52,65 @@ createApp({
       lastHoverKey: null,
 
       // UI
-      foundWords: [],
+      foundWords: [],            // display strings (UPPERCASE)
+      foundSet: new Set(),       // lowercase, for fast duplicate check
       message: "",
       messageKind: "info",
 
-      // Geometry for SVG
+      // Geometry for wrap-style line mask
       boardW: 1,
       boardH: 1,
       centres: new Map(),        // "r,c" -> {x,y}
-      cutouts: [],               // [{x,y,w,h,rx,ry}] (tile rects for mask)
-      pathPoints: []             // [{x,y}] (centres along selection)
+      cutouts: [],               // [{x,y,w,h,rx,ry}]
+      pathPoints: [],            // [{x,y}]
+
+      // Mask tuning (match what you liked)
+      maskInset: 1,              // you said 1 looked great
+      maskRx: 14,                // keep close to CSS tile radius
+      maskRy: 14
     };
   },
 
   computed: {
+    // Word as it should be checked/scored, e.g. "QUICK" (no spaces)
     currentWord() {
-      return this.selectedPath.map(p => this.grid[p.row][p.col]).join("");
+      const parts = this.selectedPath.map(p => this.grid[p.row][p.col]);
+      // "Qu" tile contributes QU; other letters just uppercase
+      return parts.map(s => (s === "Qu" || s === "QU") ? "QU" : String(s).toUpperCase()).join("");
     },
     score() {
-      return this.foundWords.length;
+      // Classic Boggle scoring
+      let total = 0;
+      for (const w of this.foundWords) {
+        const n = w.length;
+        if (n === 4) total += 1;
+        else if (n === 5) total += 2;
+        else if (n === 6) total += 3;
+        else if (n === 7) total += 5;
+        else if (n >= 8) total += 11;
+      }
+      return total;
     },
     polylinePointsAttr() {
       return this.pathPoints.map(p => `${p.x},${p.y}`).join(" ");
+    },
+    statusText() {
+      return this.dictReady ? "" : "Loading dictionary…";
     }
   },
 
-  mounted() {
+  async mounted() {
     this.rebuildGeometry();
     this.refreshPathLine();
 
     window.addEventListener("resize", this.onResize);
     window.addEventListener("orientationchange", this.onResize);
 
-    // Let layout settle
+    // Load dictionary, then roll a fresh board
+    await this.loadDictionary();
+    this.newGame();
+
+    // Layout settle pass
     setTimeout(() => {
       this.rebuildGeometry();
       this.refreshPathLine();
@@ -74,7 +132,82 @@ createApp({
   },
 
   methods: {
-    // ---------- helpers ----------
+    // ---------- dictionary ----------
+    async loadDictionary() {
+      this.dictReady = false;
+      this.dict = new Set();
+
+      try {
+        const res = await fetch("words.txt", { cache: "no-cache" });
+        if (!res.ok) throw new Error(`Failed to load words.txt (${res.status})`);
+        const text = await res.text();
+
+        // One word per line (case-insensitive)
+        const set = new Set();
+        for (const line of text.split(/\r?\n/)) {
+          const w = line.trim().toLowerCase();
+          if (!w) continue;
+          // Basic sanitation: only keep a–z (and allow 'qu' naturally)
+          if (!/^[a-z]+$/.test(w)) continue;
+          set.add(w);
+        }
+
+        this.dict = set;
+        this.dictReady = true;
+      } catch (err) {
+        console.warn(err);
+        this.showMessage("Could not load words.txt. Check it’s in the same folder as index.html.", "bad");
+      }
+    },
+
+    // ---------- board generation ----------
+    newGame() {
+      this.clearSelection();
+      this.foundWords = [];
+      this.foundSet = new Set();
+      this.clearMessage();
+
+      // If you haven’t pasted dice yet, keep the current grid.
+      if (!Array.isArray(DICE) || DICE.length !== 16) {
+        this.showMessage("Paste your 16 dice into DICE in app.js to enable random boards.", "info");
+        return;
+      }
+
+      const diceOrder = this.shuffle([...Array(16).keys()]);
+      const rolled = diceOrder.map(i => {
+        const die = DICE[i];
+        const face = die[Math.floor(Math.random() * die.length)];
+        // normalise Qu display
+        return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
+      });
+
+      // Fill 4x4
+      const g = [];
+      for (let r = 0; r < 4; r++) {
+        const row = [];
+        for (let c = 0; c < 4; c++) {
+          row.push(rolled[r * 4 + c]);
+        }
+        g.push(row);
+      }
+      this.grid = g;
+
+      // Geometry depends on tile positions; update after DOM paints
+      this.$nextTick(() => {
+        this.rebuildGeometry();
+        this.refreshPathLine();
+      });
+    },
+
+    shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    },
+
+    // ---------- selection helpers ----------
     keyOf(r, c) { return `${r},${c}`; },
 
     isSelected(r, c) {
@@ -136,7 +269,7 @@ createApp({
       this.messageKind = "info";
     },
 
-    // ---------- geometry for line + mask ----------
+    // ---------- geometry for wrap line mask ----------
     onResize() {
       this.rebuildGeometry();
       this.refreshPathLine();
@@ -166,24 +299,16 @@ createApp({
         const w = rect.width;
         const h = rect.height;
 
-        centres.set(this.keyOf(r, c), {
-          x: x + w / 2,
-          y: y + h / 2
-        });
+        centres.set(this.keyOf(r, c), { x: x + w / 2, y: y + h / 2 });
 
-        // Mask cutout slightly INSET so the line peeks through gaps nicely.
-        // Also matches tile rounding visually.
-        const inset = 1;         // adjust if you want more/less wrap
-        const rx = 14;           // should match CSS tile radius closely
-        const ry = 14;
-
+        const inset = this.maskInset;
         cutouts.push({
           x: x + inset,
           y: y + inset,
           w: Math.max(0, w - inset * 2),
           h: Math.max(0, h - inset * 2),
-          rx,
-          ry
+          rx: this.maskRx,
+          ry: this.maskRy
         });
       });
 
@@ -200,7 +325,7 @@ createApp({
       this.pathPoints = pts;
     },
 
-    // ---------- hit-testing for drag ----------
+    // ---------- hit-testing ----------
     cellFromPoint(clientX, clientY) {
       const el = document.elementFromPoint(clientX, clientY);
       if (!el) return null;
@@ -215,64 +340,62 @@ createApp({
       return { row, col };
     },
 
-    // ---------- gestures ----------
-onTilePointerDown(e, row, col) {
-  e.preventDefault();
+    // ---------- gestures (tap vs drag, with special taps) ----------
+    onTilePointerDown(e, row, col) {
+      e.preventDefault();
 
-  const isAlreadySelected = this.isSelected(row, col);
-  const last = this.lastCell();
-  const first = this.selectedPath.length ? this.selectedPath[0] : null;
-  const isLast =
-    last && last.row === row && last.col === col;
-  const isFirst =
-    first && first.row === row && first.col === col;
+      const isAlreadySelected = this.isSelected(row, col);
+      const last = this.lastCell();
+      const first = this.selectedPath.length ? this.selectedPath[0] : null;
+      const isLast = last && last.row === row && last.col === col;
+      const isFirst = first && first.row === row && first.col === col;
 
-  // If we are already selecting (tap mode), interpret special taps:
-  if (this.selecting && this.gestureMode !== "drag") {
-    this.gestureMode = "tap";
-    this.clearMessage();
+      if (this.selecting && this.gestureMode !== "drag") {
+        this.gestureMode = "tap";
+        this.clearMessage();
 
-    // Tap first tile -> clear everything
-    if (isFirst) {
-      this.clearSelection();
-      return;
-    }
+        // Tap first tile -> clear
+        if (isFirst) {
+          this.clearSelection();
+          return;
+        }
 
-    // Tap last tile again -> submit
-    if (isLast) {
-      this.submitWord();
-      return;
-    }
+        // Tap last tile again -> submit
+        if (isLast) {
+          this.submitWord();
+          return;
+        }
 
-    // Tap any other selected tile -> rewind back to it
-    if (isAlreadySelected) {
-      this.rewindTo(row, col);
-      return;
-    }
+        // Tap other selected tile -> rewind
+        if (isAlreadySelected) {
+          this.rewindTo(row, col);
+          return;
+        }
 
-    // Otherwise extend path
-    this.addCell(row, col);
-  } else {
-    // Start a fresh selection
-    this.selecting = true;
-    this.gestureMode = "pending";
-    this.clearMessage();
-    this.selectedPath = [{ row, col }];
-  }
+        // Otherwise extend
+        this.addCell(row, col);
+      } else {
+        // Start fresh selection
+        this.selecting = true;
+        this.gestureMode = "pending";
+        this.clearMessage();
+        this.selectedPath = [{ row, col }];
+      }
 
-  // Track pointer for drag detection (if they move, it becomes drag mode)
-  this.activePointerId = e.pointerId;
-  this.startX = e.clientX;
-  this.startY = e.clientY;
-  this.lastHoverKey = this.keyOf(row, col);
+      // Track pointer for drag detection
+      this.activePointerId = e.pointerId;
+      this.startX = e.clientX;
+      this.startY = e.clientY;
+      this.lastHoverKey = this.keyOf(row, col);
 
-  e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
-},
+      e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+    },
 
     onBoardPointerMove(e) {
       if (!this.selecting) return;
       if (this.activePointerId !== e.pointerId) return;
 
+      // Decide drag vs tap once movement exceeds threshold
       if (this.gestureMode === "pending") {
         const dx = e.clientX - this.startX;
         const dy = e.clientY - this.startY;
@@ -288,6 +411,7 @@ onTilePointerDown(e, row, col) {
       if (k === this.lastHoverKey) return;
       this.lastHoverKey = k;
 
+      // Drag backtrack: move onto second-last tile to pop last
       const secondLast = this.secondLastCell();
       if (secondLast && secondLast.row === cell.row && secondLast.col === cell.col) {
         this.popLast();
@@ -312,23 +436,41 @@ onTilePointerDown(e, row, col) {
       this.clearSelection();
     },
 
-    // ---------- submit ----------
+    // ---------- submission / validation ----------
     submitWord() {
-      const word = this.currentWord;
+      if (!this.dictReady) {
+        this.showMessage("Dictionary still loading…", "info");
+        return;
+      }
 
-      if (word.length < 4) {
+      const wordUpper = this.currentWord;
+      const word = wordUpper.toLowerCase();
+
+      if (wordUpper.length < 4) {
         this.showMessage("Minimum 4 letters.", "bad");
         return;
       }
 
-      const upper = word.toUpperCase();
-      if (this.foundWords.includes(upper)) {
+      // Optional extra rule: disallow words containing 'q' not followed by 'u'
+      // (Usually unnecessary if you rely on Qu tiles, but it’s a nice sanity check.)
+      if (word.includes("q") && !word.includes("qu")) {
+        this.showMessage("Invalid Q (must be QU).", "bad");
+        return;
+      }
+
+      if (this.foundSet.has(word)) {
         this.showMessage("Already found.", "bad");
         return;
       }
 
-      this.foundWords.unshift(upper);
-      this.showMessage("Added!", "good");
+      if (!this.dict.has(word)) {
+        this.showMessage("Not in dictionary.", "bad");
+        return;
+      }
+
+      this.foundWords.unshift(wordUpper);
+      this.foundSet.add(word);
+      this.showMessage("Nice!", "good");
       this.clearSelection();
     }
   },
@@ -338,7 +480,10 @@ onTilePointerDown(e, row, col) {
       <header class="topbar">
         <div class="brand">
           <div class="title">Moggle</div>
-          <div class="subtitle">Score: <span class="score">{{ score }}</span></div>
+          <div class="subtitle">
+            Score: <span class="score">{{ score }}</span>
+            <span v-if="statusText" class="status"> · {{ statusText }}</span>
+          </div>
         </div>
       </header>
 
@@ -351,7 +496,6 @@ onTilePointerDown(e, row, col) {
           @pointercancel="onBoardPointerCancel"
           @pointerleave="onBoardPointerUp"
         >
-          <!-- Underlay: draw line in full, then CUT OUT tile interiors so it only shows in gaps -->
           <svg
             class="path-underlay"
             aria-hidden="true"
@@ -360,9 +504,7 @@ onTilePointerDown(e, row, col) {
           >
             <defs>
               <mask id="tileCutoutMask">
-                <!-- keep everything -->
                 <rect x="0" y="0" :width="boardW" :height="boardH" fill="white" />
-                <!-- remove tile interiors -->
                 <rect
                   v-for="(t, i) in cutouts"
                   :key="i"
@@ -416,12 +558,15 @@ onTilePointerDown(e, row, col) {
             <button class="btn" type="button" @click="clearSelection" :disabled="selectedPath.length === 0">
               Clear
             </button>
+            <button class="btn" type="button" @click="newGame">
+              New
+            </button>
           </div>
 
           <div v-if="message" class="message" :class="messageKind">{{ message }}</div>
 
           <div class="microhint">
-            Tap to select. Tap a selected tile to backtrack. Press and drag to draw a path.
+            Tap to select. Tap the first tile to clear. Tap the last tile to submit. Press and drag to draw a path.
           </div>
         </div>
 
