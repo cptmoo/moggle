@@ -2,10 +2,8 @@ const { createApp } = Vue;
 
 /**
  * Paste your 16 dice here.
- * Format: 16 items, each item is an array of faces (strings).
- * Use "Qu" (capital Q, lower u) for Qu faces if you want it displayed nicely.
- *
- * Example die: ["A", "A", "E", "E", "G", "N"]
+ * 16 items, each an array of 6 faces (strings).
+ * Use "Qu" for Qu faces.
  */
 const DICE = [
   // TODO: replace with your real 16 dice
@@ -19,7 +17,7 @@ const DICE = [
   ["E", "I", "O", "S", "S", "T"],
   ["D", "E", "L", "R", "V", "Y"],
   ["A", "C", "H", "O", "P", "S"],
-  ["H", "I", "M", "N", "Qu", "U"], // example with Qu
+  ["H", "I", "M", "N", "Qu", "U"],
   ["E", "E", "I", "N", "S", "U"],
   ["E", "E", "G", "H", "N", "W"],
   ["A", "F", "F", "K", "P", "S"],
@@ -30,7 +28,7 @@ const DICE = [
 createApp({
   data() {
     return {
-      // Board (strings, e.g. "A", "Qu")
+      // Board
       grid: [
         ["T", "A", "P", "E"],
         ["R", "S", "L", "N"],
@@ -40,46 +38,53 @@ createApp({
 
       // Dictionary
       dictReady: false,
-      dict: new Set(), // lowercase words
+      dict: new Set(),
+
+      // Timer / game state
+      gameLengthSec: 180,
+      timeLeftSec: 180,
+      timerRunning: false,
+      gameOver: false,
+      timerId: null, // setInterval id
 
       // Selection
       selecting: false,
-      selectedPath: [],          // [{row, col}]
-      gestureMode: "idle",       // idle | pending | tap | drag
+      selectedPath: [],
+      gestureMode: "idle", // idle | pending | tap | drag
       activePointerId: null,
       startX: 0,
       startY: 0,
       lastHoverKey: null,
 
       // UI
-      foundWords: [],            // display strings (UPPERCASE)
-      foundSet: new Set(),       // lowercase, for fast duplicate check
+      foundWords: [],
+      foundSet: new Set(),
       message: "",
       messageKind: "info",
 
-      // Geometry for wrap-style line mask
+      // Geometry for wrap line mask
       boardW: 1,
       boardH: 1,
-      centres: new Map(),        // "r,c" -> {x,y}
-      cutouts: [],               // [{x,y,w,h,rx,ry}]
-      pathPoints: [],            // [{x,y}]
+      centres: new Map(),
+      cutouts: [],
+      pathPoints: [],
 
-      // Mask tuning (match what you liked)
-      maskInset: 1,              // you said 1 looked great
-      maskRx: 14,                // keep close to CSS tile radius
+      // Mask tuning (your preferred values)
+      maskInset: 1,
+      maskRx: 14,
       maskRy: 14
     };
   },
 
   computed: {
-    // Word as it should be checked/scored, e.g. "QUICK" (no spaces)
     currentWord() {
       const parts = this.selectedPath.map(p => this.grid[p.row][p.col]);
-      // "Qu" tile contributes QU; other letters just uppercase
-      return parts.map(s => (s === "Qu" || s === "QU") ? "QU" : String(s).toUpperCase()).join("");
+      return parts
+        .map(s => (s === "Qu" || s === "QU") ? "QU" : String(s).toUpperCase())
+        .join("");
     },
+
     score() {
-      // Classic Boggle scoring
       let total = 0;
       for (const w of this.foundWords) {
         const n = w.length;
@@ -91,11 +96,25 @@ createApp({
       }
       return total;
     },
+
     polylinePointsAttr() {
       return this.pathPoints.map(p => `${p.x},${p.y}`).join(" ");
     },
+
     statusText() {
-      return this.dictReady ? "" : "Loading dictionary…";
+      if (!this.dictReady) return "Loading dictionary…";
+      if (this.gameOver) return "Time!";
+      return "";
+    },
+
+    timeText() {
+      const m = Math.floor(this.timeLeftSec / 60);
+      const s = this.timeLeftSec % 60;
+      return `${m}:${String(s).padStart(2, "0")}`;
+    },
+
+    canInteract() {
+      return this.dictReady && !this.gameOver;
     }
   },
 
@@ -106,11 +125,11 @@ createApp({
     window.addEventListener("resize", this.onResize);
     window.addEventListener("orientationchange", this.onResize);
 
-    // Load dictionary, then roll a fresh board
     await this.loadDictionary();
-    this.newGame();
 
-    // Layout settle pass
+    // Start first game
+    this.newGame(true);
+
     setTimeout(() => {
       this.rebuildGeometry();
       this.refreshPathLine();
@@ -120,6 +139,7 @@ createApp({
   unmounted() {
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("orientationchange", this.onResize);
+    this.stopTimer();
   },
 
   watch: {
@@ -142,12 +162,10 @@ createApp({
         if (!res.ok) throw new Error(`Failed to load words.txt (${res.status})`);
         const text = await res.text();
 
-        // One word per line (case-insensitive)
         const set = new Set();
         for (const line of text.split(/\r?\n/)) {
           const w = line.trim().toLowerCase();
           if (!w) continue;
-          // Basic sanitation: only keep a–z (and allow 'qu' naturally)
           if (!/^[a-z]+$/.test(w)) continue;
           set.add(w);
         }
@@ -160,43 +178,78 @@ createApp({
       }
     },
 
+    // ---------- timer ----------
+    startTimer() {
+      if (this.timerRunning || this.gameOver) return;
+      this.timerRunning = true;
+
+      this.timerId = setInterval(() => {
+        if (this.timeLeftSec <= 1) {
+          this.timeLeftSec = 0;
+          this.endGame();
+          return;
+        }
+        this.timeLeftSec -= 1;
+      }, 1000);
+    },
+
+    stopTimer() {
+      if (this.timerId) {
+        clearInterval(this.timerId);
+        this.timerId = null;
+      }
+      this.timerRunning = false;
+    },
+
+    toggleTimer() {
+      if (this.gameOver) return;
+      if (this.timerRunning) this.stopTimer();
+      else this.startTimer();
+    },
+
+    endGame() {
+      this.stopTimer();
+      this.gameOver = true;
+      this.clearSelection();
+      this.showMessage(`Time’s up! Final score: ${this.score}`, "info");
+    },
+
     // ---------- board generation ----------
-    newGame() {
+    newGame(autoStart = false) {
+      this.stopTimer();
+      this.gameOver = false;
+      this.timeLeftSec = this.gameLengthSec;
+
       this.clearSelection();
       this.foundWords = [];
       this.foundSet = new Set();
       this.clearMessage();
 
-      // If you haven’t pasted dice yet, keep the current grid.
       if (!Array.isArray(DICE) || DICE.length !== 16) {
         this.showMessage("Paste your 16 dice into DICE in app.js to enable random boards.", "info");
-        return;
-      }
+      } else {
+        const diceOrder = this.shuffle([...Array(16).keys()]);
+        const rolled = diceOrder.map(i => {
+          const die = DICE[i];
+          const face = die[Math.floor(Math.random() * die.length)];
+          return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
+        });
 
-      const diceOrder = this.shuffle([...Array(16).keys()]);
-      const rolled = diceOrder.map(i => {
-        const die = DICE[i];
-        const face = die[Math.floor(Math.random() * die.length)];
-        // normalise Qu display
-        return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
-      });
-
-      // Fill 4x4
-      const g = [];
-      for (let r = 0; r < 4; r++) {
-        const row = [];
-        for (let c = 0; c < 4; c++) {
-          row.push(rolled[r * 4 + c]);
+        const g = [];
+        for (let r = 0; r < 4; r++) {
+          const row = [];
+          for (let c = 0; c < 4; c++) row.push(rolled[r * 4 + c]);
+          g.push(row);
         }
-        g.push(row);
+        this.grid = g;
       }
-      this.grid = g;
 
-      // Geometry depends on tile positions; update after DOM paints
       this.$nextTick(() => {
         this.rebuildGeometry();
         this.refreshPathLine();
       });
+
+      if (autoStart) this.startTimer();
     },
 
     shuffle(arr) {
@@ -340,9 +393,10 @@ createApp({
       return { row, col };
     },
 
-    // ---------- gestures (tap vs drag, with special taps) ----------
+    // ---------- gestures ----------
     onTilePointerDown(e, row, col) {
       e.preventDefault();
+      if (!this.canInteract) return;
 
       const isAlreadySelected = this.isSelected(row, col);
       const last = this.lastCell();
@@ -354,35 +408,29 @@ createApp({
         this.gestureMode = "tap";
         this.clearMessage();
 
-        // Tap first tile -> clear
         if (isFirst) {
           this.clearSelection();
           return;
         }
 
-        // Tap last tile again -> submit
         if (isLast) {
           this.submitWord();
           return;
         }
 
-        // Tap other selected tile -> rewind
         if (isAlreadySelected) {
           this.rewindTo(row, col);
           return;
         }
 
-        // Otherwise extend
         this.addCell(row, col);
       } else {
-        // Start fresh selection
         this.selecting = true;
         this.gestureMode = "pending";
         this.clearMessage();
         this.selectedPath = [{ row, col }];
       }
 
-      // Track pointer for drag detection
       this.activePointerId = e.pointerId;
       this.startX = e.clientX;
       this.startY = e.clientY;
@@ -392,10 +440,10 @@ createApp({
     },
 
     onBoardPointerMove(e) {
+      if (!this.canInteract) return;
       if (!this.selecting) return;
       if (this.activePointerId !== e.pointerId) return;
 
-      // Decide drag vs tap once movement exceeds threshold
       if (this.gestureMode === "pending") {
         const dx = e.clientX - this.startX;
         const dy = e.clientY - this.startY;
@@ -411,7 +459,6 @@ createApp({
       if (k === this.lastHoverKey) return;
       this.lastHoverKey = k;
 
-      // Drag backtrack: move onto second-last tile to pop last
       const secondLast = this.secondLastCell();
       if (secondLast && secondLast.row === cell.row && secondLast.col === cell.col) {
         this.popLast();
@@ -438,23 +485,13 @@ createApp({
 
     // ---------- submission / validation ----------
     submitWord() {
-      if (!this.dictReady) {
-        this.showMessage("Dictionary still loading…", "info");
-        return;
-      }
+      if (!this.canInteract) return;
 
       const wordUpper = this.currentWord;
       const word = wordUpper.toLowerCase();
 
       if (wordUpper.length < 4) {
         this.showMessage("Minimum 4 letters.", "bad");
-        return;
-      }
-
-      // Optional extra rule: disallow words containing 'q' not followed by 'u'
-      // (Usually unnecessary if you rely on Qu tiles, but it’s a nice sanity check.)
-      if (word.includes("q") && !word.includes("qu")) {
-        this.showMessage("Invalid Q (must be QU).", "bad");
         return;
       }
 
@@ -484,6 +521,16 @@ createApp({
             Score: <span class="score">{{ score }}</span>
             <span v-if="statusText" class="status"> · {{ statusText }}</span>
           </div>
+        </div>
+
+        <div class="timerbar">
+          <div class="time">{{ timeText }}</div>
+          <button class="btn mini" type="button" @click="toggleTimer" :disabled="gameOver || !dictReady">
+            {{ timerRunning ? "Pause" : "Start" }}
+          </button>
+          <button class="btn mini" type="button" @click="newGame(true)" :disabled="!dictReady">
+            New
+          </button>
         </div>
       </header>
 
@@ -527,7 +574,7 @@ createApp({
             />
           </svg>
 
-          <div class="tiles">
+          <div class="tiles" :class="{ locked: gameOver }">
             <div class="row" v-for="(row, r) in grid" :key="r">
               <button
                 class="tile"
@@ -552,14 +599,11 @@ createApp({
           </div>
 
           <div class="actions">
-            <button class="btn primary" type="button" @click="submitWord" :disabled="selectedPath.length === 0">
+            <button class="btn primary" type="button" @click="submitWord" :disabled="selectedPath.length === 0 || !canInteract">
               Enter
             </button>
-            <button class="btn" type="button" @click="clearSelection" :disabled="selectedPath.length === 0">
+            <button class="btn" type="button" @click="clearSelection" :disabled="selectedPath.length === 0 || !canInteract">
               Clear
-            </button>
-            <button class="btn" type="button" @click="newGame">
-              New
             </button>
           </div>
 

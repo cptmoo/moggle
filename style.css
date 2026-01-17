@@ -30,6 +30,32 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+.timerbar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.time {
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(20, 20, 20, 0.12);
+  background: rgba(255,255,255,0.6);
+}
+.tiles.locked {
+  opacity: 0.85;
+}
+
+.btn.mini {
+  padding: 10px 12px;
+  font-size: 14px;
+}
 
 body {
   margin: 0;
