@@ -3,7 +3,6 @@ const { createApp } = Vue;
 createApp({
   data() {
     return {
-      // Replace later with random generation if you want
       grid: [
         ["T", "A", "P", "E"],
         ["R", "S", "L", "N"],
@@ -11,21 +10,26 @@ createApp({
         ["C", "H", "U", "G"]
       ],
 
-      // Selection state
+      // Selection
       selecting: false,
-      selectedPath: [], // [{row, col}]
-      gestureMode: "idle", // idle | pending | tap | drag
-
-      // Pointer tracking
+      selectedPath: [],          // [{row, col}]
+      gestureMode: "idle",       // idle | pending | tap | drag
       activePointerId: null,
       startX: 0,
       startY: 0,
       lastHoverKey: null,
 
-      // UI state
+      // UI
       foundWords: [],
       message: "",
-      messageKind: "info" // info | good | bad
+      messageKind: "info",
+
+      // Geometry for SVG
+      boardW: 1,
+      boardH: 1,
+      centres: new Map(),        // "r,c" -> {x,y}
+      cutouts: [],               // [{x,y,w,h,rx,ry}] (tile rects for mask)
+      pathPoints: []             // [{x,y}] (centres along selection)
     };
   },
 
@@ -34,31 +38,92 @@ createApp({
       return this.selectedPath.map(p => this.grid[p.row][p.col]).join("");
     },
     score() {
-      // Placeholder scoring: 1 point per accepted word
       return this.foundWords.length;
+    },
+    polylinePointsAttr() {
+      return this.pathPoints.map(p => `${p.x},${p.y}`).join(" ");
+    }
+  },
+
+  mounted() {
+    this.rebuildGeometry();
+    this.refreshPathLine();
+
+    window.addEventListener("resize", this.onResize);
+    window.addEventListener("orientationchange", this.onResize);
+
+    // Let layout settle
+    setTimeout(() => {
+      this.rebuildGeometry();
+      this.refreshPathLine();
+    }, 0);
+  },
+
+  unmounted() {
+    window.removeEventListener("resize", this.onResize);
+    window.removeEventListener("orientationchange", this.onResize);
+  },
+
+  watch: {
+    selectedPath: {
+      deep: true,
+      handler() {
+        this.refreshPathLine();
+      }
     }
   },
 
   methods: {
-    // ---------- Helpers ----------
-    keyOf(row, col) {
-      return `${row},${col}`;
+    // ---------- helpers ----------
+    keyOf(r, c) { return `${r},${c}`; },
+
+    isSelected(r, c) {
+      return this.selectedPath.some(p => p.row === r && p.col === c);
     },
 
-    isSelected(row, col) {
-      return this.selectedPath.some(p => p.row === row && p.col === col);
+    indexInPath(r, c) {
+      return this.selectedPath.findIndex(p => p.row === r && p.col === c);
     },
 
     lastCell() {
       return this.selectedPath.length ? this.selectedPath[this.selectedPath.length - 1] : null;
     },
 
-    isAdjacent(row, col) {
+    secondLastCell() {
+      return this.selectedPath.length >= 2 ? this.selectedPath[this.selectedPath.length - 2] : null;
+    },
+
+    isAdjacent(r, c) {
       if (this.selectedPath.length === 0) return true;
       const last = this.lastCell();
-      const dr = Math.abs(last.row - row);
-      const dc = Math.abs(last.col - col);
+      const dr = Math.abs(last.row - r);
+      const dc = Math.abs(last.col - c);
       return dr <= 1 && dc <= 1;
+    },
+
+    addCell(r, c) {
+      if (this.isSelected(r, c)) return;
+      if (!this.isAdjacent(r, c)) return;
+      this.selectedPath.push({ row: r, col: c });
+    },
+
+    rewindTo(r, c) {
+      const idx = this.indexInPath(r, c);
+      if (idx === -1) return;
+      this.selectedPath = this.selectedPath.slice(0, idx + 1);
+    },
+
+    popLast() {
+      if (this.selectedPath.length) this.selectedPath.pop();
+    },
+
+    clearSelection() {
+      this.selecting = false;
+      this.selectedPath = [];
+      this.gestureMode = "idle";
+      this.activePointerId = null;
+      this.lastHoverKey = null;
+      this.pathPoints = [];
     },
 
     showMessage(text, kind = "info") {
@@ -71,26 +136,76 @@ createApp({
       this.messageKind = "info";
     },
 
-    clearSelection() {
-      this.selecting = false;
-      this.selectedPath = [];
-      this.gestureMode = "idle";
-      this.activePointerId = null;
-      this.lastHoverKey = null;
+    // ---------- geometry for line + mask ----------
+    onResize() {
+      this.rebuildGeometry();
+      this.refreshPathLine();
     },
 
-    addCell(row, col) {
-      if (this.isSelected(row, col)) return;
-      if (!this.isAdjacent(row, col)) return;
+    rebuildGeometry() {
+      const board = this.$refs.board;
+      if (!board) return;
 
-      this.selectedPath.push({ row, col });
+      this.boardW = board.clientWidth || 1;
+      this.boardH = board.clientHeight || 1;
+
+      const boardRect = board.getBoundingClientRect();
+      const tiles = board.querySelectorAll("[data-row][data-col]");
+
+      const centres = new Map();
+      const cutouts = [];
+
+      tiles.forEach(tile => {
+        const r = Number(tile.dataset.row);
+        const c = Number(tile.dataset.col);
+        if (Number.isNaN(r) || Number.isNaN(c)) return;
+
+        const rect = tile.getBoundingClientRect();
+        const x = rect.left - boardRect.left;
+        const y = rect.top - boardRect.top;
+        const w = rect.width;
+        const h = rect.height;
+
+        centres.set(this.keyOf(r, c), {
+          x: x + w / 2,
+          y: y + h / 2
+        });
+
+        // Mask cutout slightly INSET so the line peeks through gaps nicely.
+        // Also matches tile rounding visually.
+        const inset = 1;         // adjust if you want more/less wrap
+        const rx = 14;           // should match CSS tile radius closely
+        const ry = 14;
+
+        cutouts.push({
+          x: x + inset,
+          y: y + inset,
+          w: Math.max(0, w - inset * 2),
+          h: Math.max(0, h - inset * 2),
+          rx,
+          ry
+        });
+      });
+
+      this.centres = centres;
+      this.cutouts = cutouts;
     },
 
-    // ---------- Board hit-testing (for drag hover) ----------
+    refreshPathLine() {
+      const pts = [];
+      for (const cell of this.selectedPath) {
+        const p = this.centres.get(this.keyOf(cell.row, cell.col));
+        if (p) pts.push(p);
+      }
+      this.pathPoints = pts;
+    },
+
+    // ---------- hit-testing for drag ----------
     cellFromPoint(clientX, clientY) {
       const el = document.elementFromPoint(clientX, clientY);
       if (!el) return null;
-      const tile = el.closest?.("[data-row][data-col]");
+
+      const tile = el.closest && el.closest("[data-row][data-col]");
       if (!tile) return null;
 
       const row = Number(tile.dataset.row);
@@ -100,48 +215,68 @@ createApp({
       return { row, col };
     },
 
-    // ---------- Gesture handling ----------
-    onTilePointerDown(e, row, col) {
-      // Start / continue selection in "pending" mode.
-      // Whether it becomes tap or drag depends on movement.
-      e.preventDefault();
+    // ---------- gestures ----------
+onTilePointerDown(e, row, col) {
+  e.preventDefault();
 
-      // If we're already selecting (tap mode), a new press acts like a tap-add.
-      // Strands-like feel: you can tap multiple tiles in sequence.
-      if (this.selecting && this.gestureMode !== "drag") {
-        this.gestureMode = "tap";
-        this.clearMessage();
-        this.addCell(row, col);
-      } else {
-        // Start fresh selection
-        this.selecting = true;
-        this.gestureMode = "pending";
-        this.clearMessage();
-        this.selectedPath = [{ row, col }];
-      }
+  const isAlreadySelected = this.isSelected(row, col);
+  const last = this.lastCell();
+  const first = this.selectedPath.length ? this.selectedPath[0] : null;
+  const isLast =
+    last && last.row === row && last.col === col;
+  const isFirst =
+    first && first.row === row && first.col === col;
 
-      this.activePointerId = e.pointerId;
-      this.startX = e.clientX;
-      this.startY = e.clientY;
-      this.lastHoverKey = this.keyOf(row, col);
+  // If we are already selecting (tap mode), interpret special taps:
+  if (this.selecting && this.gestureMode !== "drag") {
+    this.gestureMode = "tap";
+    this.clearMessage();
 
-      // Capture pointer so we keep getting moves/up even if finger leaves the tile
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    },
+    // Tap first tile -> clear everything
+    if (isFirst) {
+      this.clearSelection();
+      return;
+    }
+
+    // Tap last tile again -> submit
+    if (isLast) {
+      this.submitWord();
+      return;
+    }
+
+    // Tap any other selected tile -> rewind back to it
+    if (isAlreadySelected) {
+      this.rewindTo(row, col);
+      return;
+    }
+
+    // Otherwise extend path
+    this.addCell(row, col);
+  } else {
+    // Start a fresh selection
+    this.selecting = true;
+    this.gestureMode = "pending";
+    this.clearMessage();
+    this.selectedPath = [{ row, col }];
+  }
+
+  // Track pointer for drag detection (if they move, it becomes drag mode)
+  this.activePointerId = e.pointerId;
+  this.startX = e.clientX;
+  this.startY = e.clientY;
+  this.lastHoverKey = this.keyOf(row, col);
+
+  e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+},
 
     onBoardPointerMove(e) {
       if (!this.selecting) return;
       if (this.activePointerId !== e.pointerId) return;
 
-      // Decide drag vs tap once movement exceeds threshold
       if (this.gestureMode === "pending") {
         const dx = e.clientX - this.startX;
         const dy = e.clientY - this.startY;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist >= 10) {
-          this.gestureMode = "drag";
-        }
+        if (Math.hypot(dx, dy) >= 10) this.gestureMode = "drag";
       }
 
       if (this.gestureMode !== "drag") return;
@@ -151,36 +286,33 @@ createApp({
 
       const k = this.keyOf(cell.row, cell.col);
       if (k === this.lastHoverKey) return;
-
       this.lastHoverKey = k;
+
+      const secondLast = this.secondLastCell();
+      if (secondLast && secondLast.row === cell.row && secondLast.col === cell.col) {
+        this.popLast();
+        return;
+      }
+
+      if (this.isSelected(cell.row, cell.col)) return;
       this.addCell(cell.row, cell.col);
     },
 
     onBoardPointerUp(e) {
       if (this.activePointerId !== e.pointerId) return;
 
-      // If it never became drag, treat it as tap flow.
-      // We keep selection active so they can continue tapping.
-      if (this.gestureMode === "pending") {
-        this.gestureMode = "tap";
-      }
-
-      if (this.gestureMode === "drag") {
-        // End the drag gesture, but keep the selection
-        // (like Strands, you can drag-build then hit Enter)
-        this.gestureMode = "tap";
-      }
+      if (this.gestureMode === "pending") this.gestureMode = "tap";
+      if (this.gestureMode === "drag") this.gestureMode = "tap";
 
       this.activePointerId = null;
       this.lastHoverKey = null;
     },
 
     onBoardPointerCancel() {
-      // If the OS cancels touch (incoming call, app switch, etc.)
       this.clearSelection();
     },
 
-    // ---------- Submission ----------
+    // ---------- submit ----------
     submitWord() {
       const word = this.currentWord;
 
@@ -195,7 +327,6 @@ createApp({
         return;
       }
 
-      // Placeholder acceptance (dictionary later)
       this.foundWords.unshift(upper);
       this.showMessage("Added!", "good");
       this.clearSelection();
@@ -214,24 +345,61 @@ createApp({
       <section class="game">
         <div
           class="board"
+          ref="board"
           @pointermove="onBoardPointerMove"
           @pointerup="onBoardPointerUp"
           @pointercancel="onBoardPointerCancel"
           @pointerleave="onBoardPointerUp"
         >
-          <div class="row" v-for="(row, r) in grid" :key="r">
-            <button
-              class="tile"
-              v-for="(letter, c) in row"
-              :key="c"
-              type="button"
-              :class="{ selected: isSelected(r, c) }"
-              :data-row="r"
-              :data-col="c"
-              @pointerdown="onTilePointerDown($event, r, c)"
-            >
-              <span class="letter">{{ letter }}</span>
-            </button>
+          <!-- Underlay: draw line in full, then CUT OUT tile interiors so it only shows in gaps -->
+          <svg
+            class="path-underlay"
+            aria-hidden="true"
+            :viewBox="\`0 0 \${boardW} \${boardH}\`"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <mask id="tileCutoutMask">
+                <!-- keep everything -->
+                <rect x="0" y="0" :width="boardW" :height="boardH" fill="white" />
+                <!-- remove tile interiors -->
+                <rect
+                  v-for="(t, i) in cutouts"
+                  :key="i"
+                  :x="t.x"
+                  :y="t.y"
+                  :width="t.w"
+                  :height="t.h"
+                  :rx="t.rx"
+                  :ry="t.ry"
+                  fill="black"
+                />
+              </mask>
+            </defs>
+
+            <polyline
+              v-if="pathPoints.length >= 2"
+              class="path-line"
+              :points="polylinePointsAttr"
+              mask="url(#tileCutoutMask)"
+            />
+          </svg>
+
+          <div class="tiles">
+            <div class="row" v-for="(row, r) in grid" :key="r">
+              <button
+                class="tile"
+                v-for="(letter, c) in row"
+                :key="c"
+                type="button"
+                :class="{ selected: isSelected(r, c) }"
+                :data-row="r"
+                :data-col="c"
+                @pointerdown="onTilePointerDown($event, r, c)"
+              >
+                <span class="letter">{{ letter }}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -251,6 +419,10 @@ createApp({
           </div>
 
           <div v-if="message" class="message" :class="messageKind">{{ message }}</div>
+
+          <div class="microhint">
+            Tap to select. Tap a selected tile to backtrack. Press and drag to draw a path.
+          </div>
         </div>
 
         <div class="found">
@@ -259,9 +431,7 @@ createApp({
             <div class="found-count">{{ foundWords.length }}</div>
           </div>
 
-          <div v-if="foundWords.length === 0" class="found-empty">
-            No words yet.
-          </div>
+          <div v-if="foundWords.length === 0" class="found-empty">No words yet.</div>
 
           <ul v-else class="found-list">
             <li v-for="w in foundWords" :key="w" class="found-item">{{ w }}</li>

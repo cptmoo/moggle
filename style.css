@@ -7,28 +7,29 @@
   --border: rgba(20, 20, 20, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 
+  /* Accent shared by line + selected tiles */
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.18);
+  --accent-line: rgba(37, 99, 235, 0.9);
+
   --tile: #ffffff;
-  --tile-selected: #2563eb;
-  --tile-selected-text: #ffffff;
+  --tile-border: rgba(20,20,20,0.10);
+
+  --good: #16a34a;
+  --bad: #dc2626;
 
   --btn: #ffffff;
   --btn-border: rgba(20, 20, 20, 0.14);
   --btn-primary: #111827;
   --btn-primary-text: #ffffff;
 
-  --good: #16a34a;
-  --bad: #dc2626;
-
   --radius-lg: 18px;
   --radius-md: 14px;
-  --radius-sm: 12px;
 }
 
 * { box-sizing: border-box; }
-
-html, body {
-  height: 100%;
-}
+html, body { height: 100%; }
 
 body {
   margin: 0;
@@ -43,9 +44,7 @@ body {
   padding: 14px 14px 24px;
 }
 
-.topbar {
-  padding: 8px 4px 12px;
-}
+.topbar { padding: 8px 4px 12px; }
 
 .brand .title {
   font-size: 28px;
@@ -71,27 +70,52 @@ body {
 
 /* Board */
 .board {
+  position: relative;
+  isolation: isolate;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 12px;
   box-shadow: var(--shadow);
-  touch-action: none; /* key for drag selection on mobile */
+
+  touch-action: none;
+  overflow: hidden;
 }
+
+/* Underlay SVG */
+.path-underlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The line is drawn everywhere, but the SVG mask hides it under tiles */
+.path-line {
+  fill: none;
+  stroke: var(--accent-line);
+  stroke-width: 20;              /* wrap look needs a bit more thickness */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,0.10));
+}
+
+/* Tiles layer */
+.tiles { position: relative; z-index: 1; }
 
 .row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
-
-.row + .row {
-  margin-top: 10px;
-}
+.row + .row { margin-top: 10px; }
 
 .tile {
   appearance: none;
-  border: 2px solid rgba(20,20,20,0.10);
+  border: 2px solid var(--tile-border);
   background: var(--tile);
   border-radius: var(--radius-md);
   padding: 0;
@@ -107,9 +131,7 @@ body {
   transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
-.tile:active {
-  transform: scale(0.98);
-}
+.tile:active { transform: scale(0.985); }
 
 .letter {
   font-size: clamp(22px, 5.2vw, 34px);
@@ -117,13 +139,11 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* Selected tiles match the line */
 .tile.selected {
-  background: var(--tile-selected);
-  border-color: rgba(37, 99, 235, 0.9);
-}
-
-.tile.selected .letter {
-  color: var(--tile-selected-text);
+  background: var(--accent-soft);
+  border-color: rgba(29, 78, 216, 0.65);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.10);
 }
 
 /* HUD */
@@ -174,11 +194,8 @@ body {
   transition: transform 120ms ease, opacity 120ms ease;
 }
 
-.btn:active { transform: scale(0.98); }
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.btn:active { transform: scale(0.985); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn.primary {
   background: var(--btn-primary);
@@ -187,7 +204,7 @@ body {
 }
 
 .message {
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   padding: 10px 12px;
   font-weight: 700;
   font-size: 14px;
@@ -205,6 +222,12 @@ body {
   border-color: rgba(220, 38, 38, 0.28);
   background: rgba(220, 38, 38, 0.07);
   color: var(--bad);
+}
+
+.microhint {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
 }
 
 /* Found list */
@@ -250,7 +273,7 @@ body {
 
 .found-item {
   border: 1px solid rgba(20,20,20,0.10);
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   padding: 10px 12px;
   font-weight: 850;
   letter-spacing: 0.03em;
