@@ -854,11 +854,11 @@ createApp({
           <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
             Official {{ currentSlotLabel }}
           </button>
-          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
-            Play random
-          </button>
           <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
             Longest {{ currentSlotLabel2 }}
+          </button>
+          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
+            Play random
           </button>
         </div>
       </header>
