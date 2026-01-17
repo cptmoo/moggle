@@ -840,13 +840,14 @@ createApp({
 
   template: `
     <main class="app">
-      <header class="topbar">
+        <header class="topbar">
         <div class="brand">
-          <div class="title">Moggle</div>
-          <div class="subtitle">
+            <div class="title">Moggle</div>
+
+            <div class="subtitle">
+            <span v-if="statusText" class="status"> {{ statusText }} · </span>
             Score: <span class="score">{{ displayScore }}</span>
-            <span v-if="statusText" class="status"> · {{ statusText }}</span>
-          </div>
+            </div>
         </div>
 
         <div class="timerbar">
@@ -879,7 +880,15 @@ createApp({
             preserveAspectRatio="none"
           >
             <defs>
-              <mask id="tileCutoutMask">
+            <mask
+                id="tileCutoutMask"
+                maskUnits="userSpaceOnUse"
+                maskContentUnits="userSpaceOnUse"
+                x="0"
+                y="0"
+                :width="boardW"
+                :height="boardH"
+                >
                 <rect x="0" y="0" :width="boardW" :height="boardH" fill="white" />
                 <rect
                   v-for="(t, i) in cutouts"
@@ -894,7 +903,6 @@ createApp({
                 />
               </mask>
             </defs>
-
             <polyline
               v-if="pathPoints.length >= 2"
               class="path-line"
