@@ -2,8 +2,7 @@ const { createApp } = Vue;
 
 /**
  * Paste your 16 dice here.
- * 16 items, each an array of 6 faces (strings).
- * Use "Qu" for Qu faces.
+ * 16 items, each an array of faces (strings). Use "Qu" for Qu.
  */
 const DICE = [
   // TODO: replace with your real 16 dice
@@ -40,12 +39,15 @@ createApp({
       dictReady: false,
       dict: new Set(),
 
-      // Timer / game state
+      // Official slot + timer
       gameLengthSec: 180,
       timeLeftSec: 180,
-      timerRunning: false,
+      timerId: null,
       gameOver: false,
-      timerId: null, // setInterval id
+
+      // Mode / seed info (for display/debug)
+      modeLabel: "",          // "Random" or "Official 10:05"
+      seedLabel: "",          // seed string used
 
       // Selection
       selecting: false,
@@ -69,10 +71,14 @@ createApp({
       cutouts: [],
       pathPoints: [],
 
-      // Mask tuning (your preferred values)
+      // Mask tuning (your preferred)
       maskInset: 1,
       maskRx: 14,
-      maskRy: 14
+      maskRy: 14,
+
+      // Clock display tick
+      now: new Date(),
+      clockId: null
     };
   },
 
@@ -101,20 +107,28 @@ createApp({
       return this.pathPoints.map(p => `${p.x},${p.y}`).join(" ");
     },
 
-    statusText() {
-      if (!this.dictReady) return "Loading dictionary…";
-      if (this.gameOver) return "Time!";
-      return "";
-    },
-
     timeText() {
       const m = Math.floor(this.timeLeftSec / 60);
       const s = this.timeLeftSec % 60;
       return `${m}:${String(s).padStart(2, "0")}`;
     },
 
+    statusText() {
+      if (!this.dictReady) return "Loading dictionary…";
+      if (this.gameOver) return "Time!";
+      return this.modeLabel ? this.modeLabel : "";
+    },
+
     canInteract() {
       return this.dictReady && !this.gameOver;
+    },
+
+    // Current 5-minute slot label, e.g. "10:05"
+    currentSlotLabel() {
+      const d = this.now;
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(Math.floor(d.getMinutes() / 5) * 5).padStart(2, "0");
+      return `${hh}:${mm}`;
     }
   },
 
@@ -125,11 +139,21 @@ createApp({
     window.addEventListener("resize", this.onResize);
     window.addEventListener("orientationchange", this.onResize);
 
+    // Keep a lightweight clock tick so the button label updates
+    this.clockId = setInterval(() => {
+      this.now = new Date();
+    }, 1000);
+
     await this.loadDictionary();
 
-    // Start first game
-    this.newGame(true);
+    // Default: start an official game immediately (nice family flow)
+    // NOPE. 
+    //this.playOfficial();
+    // INSTEAD, I will play random and let everyone join at the same time. 
+    this.playRandom();
 
+
+    // Layout settle pass
     setTimeout(() => {
       this.rebuildGeometry();
       this.refreshPathLine();
@@ -140,6 +164,7 @@ createApp({
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("orientationchange", this.onResize);
     this.stopTimer();
+    if (this.clockId) clearInterval(this.clockId);
   },
 
   watch: {
@@ -178,10 +203,35 @@ createApp({
       }
     },
 
+    // ---------- seeded RNG (deterministic across devices) ----------
+    // 32-bit FNV-1a hash -> integer seed
+    fnv1a32(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        // h *= 16777619 (with overflow)
+        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      }
+      return h >>> 0;
+    },
+
+    // Mulberry32 PRNG
+    mulberry32(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    },
+
     // ---------- timer ----------
     startTimer() {
-      if (this.timerRunning || this.gameOver) return;
-      this.timerRunning = true;
+      this.stopTimer();
+      this.timeLeftSec = this.gameLengthSec;
+      this.gameOver = false;
 
       this.timerId = setInterval(() => {
         if (this.timeLeftSec <= 1) {
@@ -198,13 +248,6 @@ createApp({
         clearInterval(this.timerId);
         this.timerId = null;
       }
-      this.timerRunning = false;
-    },
-
-    toggleTimer() {
-      if (this.gameOver) return;
-      if (this.timerRunning) this.stopTimer();
-      else this.startTimer();
     },
 
     endGame() {
@@ -214,50 +257,90 @@ createApp({
       this.showMessage(`Time’s up! Final score: ${this.score}`, "info");
     },
 
-    // ---------- board generation ----------
-    newGame(autoStart = false) {
-      this.stopTimer();
-      this.gameOver = false;
-      this.timeLeftSec = this.gameLengthSec;
+    // ---------- game selection (official vs random) ----------
+    playOfficial() {
+      if (!this.dictReady) return;
 
+      // Use UTC in the seed so everyone worldwide is consistent if needed.
+      // If you want "local time for family only", swap to local fields.
+      const d = new Date();
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mins5 = String(Math.floor(d.getUTCMinutes() / 5) * 5).padStart(2, "0");
+
+      const slot = `${yyyy}-${mm}-${dd} ${hh}:${mins5}Z`;
+      const seedString = `moggle|official|${slot}`;
+
+      this.modeLabel = `Official ${this.currentSlotLabel}`;
+      this.seedLabel = seedString;
+
+      this.startNewBoardFromSeed(seedString);
+    },
+
+    playRandom() {
+      if (!this.dictReady) return;
+
+      // Random seed based on crypto if available, else Date
+      let seedString = `moggle|random|${Date.now()}`;
+      if (crypto && crypto.getRandomValues) {
+        const a = new Uint32Array(2);
+        crypto.getRandomValues(a);
+        seedString = `moggle|random|${a[0]}-${a[1]}-${Date.now()}`;
+      }
+
+      this.modeLabel = "Random";
+      this.seedLabel = seedString;
+
+      this.startNewBoardFromSeed(seedString);
+    },
+
+    startNewBoardFromSeed(seedString) {
       this.clearSelection();
       this.foundWords = [];
       this.foundSet = new Set();
       this.clearMessage();
 
-      if (!Array.isArray(DICE) || DICE.length !== 16) {
-        this.showMessage("Paste your 16 dice into DICE in app.js to enable random boards.", "info");
-      } else {
-        const diceOrder = this.shuffle([...Array(16).keys()]);
-        const rolled = diceOrder.map(i => {
-          const die = DICE[i];
-          const face = die[Math.floor(Math.random() * die.length)];
-          return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
-        });
+      // Build deterministic RNG
+      const seed = this.fnv1a32(seedString);
+      const rand = this.mulberry32(seed);
 
-        const g = [];
-        for (let r = 0; r < 4; r++) {
-          const row = [];
-          for (let c = 0; c < 4; c++) row.push(rolled[r * 4 + c]);
-          g.push(row);
-        }
-        this.grid = g;
+      // Need 16 dice
+      if (!Array.isArray(DICE) || DICE.length !== 16) {
+        this.showMessage("Paste your 16 dice into DICE in app.js.", "bad");
+        return;
       }
+
+      // Deterministic shuffle of dice indices
+      const idx = [...Array(16).keys()];
+      for (let i = idx.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [idx[i], idx[j]] = [idx[j], idx[i]];
+      }
+
+      // Deterministic face selection
+      const rolled = idx.map(i => {
+        const die = DICE[i];
+        const face = die[Math.floor(rand() * die.length)];
+        return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
+      });
+
+      const g = [];
+      for (let r = 0; r < 4; r++) {
+        const row = [];
+        for (let c = 0; c < 4; c++) row.push(rolled[r * 4 + c]);
+        g.push(row);
+      }
+      this.grid = g;
+
+      // Start the 3-minute countdown for this game
+      this.startTimer();
 
       this.$nextTick(() => {
         this.rebuildGeometry();
         this.refreshPathLine();
       });
-
-      if (autoStart) this.startTimer();
-    },
-
-    shuffle(arr) {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      return arr;
     },
 
     // ---------- selection helpers ----------
@@ -525,11 +608,11 @@ createApp({
 
         <div class="timerbar">
           <div class="time">{{ timeText }}</div>
-          <button class="btn mini" type="button" @click="toggleTimer" :disabled="gameOver || !dictReady">
-            {{ timerRunning ? "Pause" : "Start" }}
+          <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
+            Play {{ currentSlotLabel }}
           </button>
-          <button class="btn mini" type="button" @click="newGame(true)" :disabled="!dictReady">
-            New
+          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
+            Play random
           </button>
         </div>
       </header>
