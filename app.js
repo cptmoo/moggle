@@ -60,7 +60,8 @@ createApp({
       missedSolutions: [],  // UPPERCASE strings
 
       // Timer
-      gameLengthSec: 180,
+      gameLengthSec: 10
+      ,
       timeLeftSec: 180,
       timerId: null,
       gameOver: false,
@@ -143,6 +144,16 @@ createApp({
       const hh = String(d.getHours()).padStart(2, "0");
       const mm = String(Math.floor(d.getMinutes() / 5) * 5).padStart(2, "0");
       return `${hh}:${mm}`;
+    }, 
+    missedCount() {
+      return this.missedSolutions.length;
+    },
+    resultsText() {
+        if (!this.gameOver) return "";
+        const label = this.modeLabel ? this.modeLabel : "Game";
+        const pts = this.score;
+        const words = this.foundWords.length;
+        return `${label} · ${pts} pts · ${words} words`;
     }
   },
 
@@ -193,6 +204,15 @@ createApp({
       if (len === 7) return 5;
       if (len >= 8) return 11;
       return 0;
+    },
+    copyResults() {
+    if (!this.resultsText) return;
+
+    navigator.clipboard.writeText(this.resultsText).then(() => {
+        this.showMessage("Results copied!", "good");
+    }).catch(() => {
+        this.showMessage("Could not copy results.", "bad");
+    });
     },
 
     // ---------- dictionary + trie ----------
@@ -276,11 +296,13 @@ createApp({
       this.gameOver = true;
       this.clearSelection();
       const label = this.modeLabel ? this.modeLabel : "Game";
-      this.showMessage(`Time’s up! Final score: ${this.score} · ${label}`, "info");
+      this.showMessage("Time’s up!", "info");
+
 
       // Run solver automatically at end
       await this.solveBoard();
-      this.showSolutions = true;
+      // don't show the solutions
+      this.showSolutions = false;
     },
 
     // ---------- game selection ----------
@@ -837,9 +859,25 @@ createApp({
           </ul>
 
           <div v-if="gameOver" style="margin-top: 12px;">
+          <div v-if="gameOver" class="results">
+            <div class="results-text">
+                {{ resultsText }}
+            </div>
+
+            </div>
+
+            <div v-if="gameOver" style="margin-top: 12px;">
+
             <button class="btn" type="button" @click="showSolutions = !showSolutions" :disabled="solving">
-              {{ solving ? "Solving…" : (showSolutions ? "Hide solutions" : "Show solutions") }}
+            {{ solving
+                ? "Solving…"
+                : (showSolutions
+                    ? "Hide solutions"
+                    : "Show solutions (" + missedCount + " missed)"
+                )
+            }}
             </button>
+
 
             <div v-if="showSolutions" style="margin-top: 10px;">
               <div style="font-weight: 900; margin-bottom: 6px;">
