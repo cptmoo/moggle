@@ -66,6 +66,8 @@ createApp({
       timeLeftSec: 180,
       timerId: null,
       gameOver: false,
+      messageTimer: null,
+      messageVisible: false,
 
       // Mode / seed info
       modeLabel: "",     // "Random" or "Official 10:05"
@@ -97,6 +99,8 @@ createApp({
       maskInset: 1,
       maskRx: 14,
       maskRy: 14,
+
+      helpOpen: false,
 
       // Clock tick (for button label)
       now: new Date(),
@@ -163,6 +167,15 @@ createApp({
     const mm = String(Math.floor(d.getMinutes() / 2) * 2).padStart(2, "0");
     return `${hh}:${mm}`;
     },
+    dailyLabel() {
+      const d = this.now; // uses your 1s ticking clock
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mons = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const mon = mons[d.getMonth()];
+      return `${dd}-${mon}`;
+    },
+
+
     missedCount() {
       return this.missedSolutions.length;
     },
@@ -360,7 +373,51 @@ createApp({
       this.showSolutions = false;
     },
 
+    // ------------- help section handling ------------
+
+    openHelp() {
+      this.helpOpen = true;
+      document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
+    },
+
+    closeHelp() {
+      this.helpOpen = false;
+    },
+
+    onOutsideHelp(e) {
+      // If the click was inside the help panel or button, ignore it
+      const helpEl = this.$refs.help;
+      if (helpEl && helpEl.contains(e.target)) {
+        // reattach listener so the *next* outside click closes it
+        document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
+        return;
+      }
+      this.closeHelp();
+    },
+
+
     // ---------- game selection ----------
+
+    playDaily() {
+      if (!this.dictReady) return;
+
+      this.gameLengthSec = this.gameLengthSecRegular;
+
+      // Seed by *local* calendar day
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+
+      const slot = `${yyyy}-${mm}-${dd}`;
+      const seedString = `moggle|daily|${slot}`;
+
+      this.modeLabel = `Daily ${this.dailyLabel}`;
+      this.seedLabel = seedString;
+
+      this.startNewBoardFromSeed(seedString);
+    },
+
     playOfficial() {
       if (!this.dictReady) return;
 
@@ -376,7 +433,7 @@ createApp({
       const slot = `${yyyy}-${mm}-${dd} ${hh}:${mins5}Z`;
       const seedString = `moggle|official|${slot}`;
 
-      this.modeLabel = `Official ${this.currentSlotLabel}`;
+      this.modeLabel = `5-min ${this.currentSlotLabel}`;
       this.seedLabel = seedString;
 
       this.startNewBoardFromSeed(seedString);
@@ -638,14 +695,39 @@ createApp({
       this.pathPoints = [];
     },
 
-    showMessage(text, kind = "info") {
+    showMessage(text, kind = "info", autoClearMs = null) {
       this.message = text;
       this.messageKind = kind;
+      this.messageVisible = true;
+
+      if (this.messageTimer) {
+        clearTimeout(this.messageTimer);
+        this.messageTimer = null;
+      }
+
+      if (autoClearMs) {
+        this.messageTimer = setTimeout(() => {
+          this.messageVisible = false; // triggers fade-out
+          this.messageTimer = null;
+        }, autoClearMs);
+      }
     },
 
     clearMessage() {
-      this.message = "";
-      this.messageKind = "info";
+      if (this.messageTimer) {
+        clearTimeout(this.messageTimer);
+        this.messageTimer = null;
+      }
+      this.messageVisible = false;
+    },
+
+    pickSuccessMessage(len) {
+      const short = ["Nice!", "Good one!", "Yep!", "Solid!", "Found it!"];
+      const mid = ["Good find!", "Great!", "Wow!", "Strong!", "Nice spot!"];
+      const long = ["Excellent!", "Brilliant!", "Huge!", "Great word!", "Love it!"];
+
+      const pool = (len >= 8) ? long : (len >= 6 ? mid : short);
+      return pool[Math.floor(Math.random() * pool.length)];
     },
 
     // ---------- geometry for wrap line mask ----------
@@ -833,7 +915,10 @@ createApp({
 
       this.foundWords.unshift(wordUpper);
       this.foundSet.add(word);
-      this.showMessage("Nice!", "good");
+
+      // feedback based on word length
+      this.showMessage(this.pickSuccessMessage(wordUpper.length), "good", 1100);
+
       this.clearSelection();
     }
   },
@@ -843,24 +928,46 @@ createApp({
         <header class="topbar">
         <div class="brand">
             <div class="title">Moggle</div>
-
+            <div class="time time--top">{{ timeText }}</div>
             <div class="subtitle">
             <span v-if="statusText" class="status"> {{ statusText }} · </span>
             Score: <span class="score">{{ displayScore }}</span>
+              <button
+                v-if="gameOver"
+                class="copybtn"
+                type="button"
+                @click="copyResults"
+                aria-label="Copy results"
+                title="Copy results"
+              >
+                ⧉
+              </button>
             </div>
         </div>
 
         <div class="timerbar">
-          <div class="time">{{ timeText }}</div>
-          <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
-            Official {{ currentSlotLabel }}
-          </button>
-          <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
-            Longest {{ currentSlotLabel2 }}
-          </button>
-          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
-            Play random
-          </button>
+          
+        <button class="btn mini" type="button" @click="playDaily" :disabled="!dictReady">
+          <span class="btn-mode">Daily</span>
+          <span class="btn-meta">{{ dailyLabel }}</span>
+        </button>
+
+
+        <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
+          <span class="btn-mode">5-min</span>
+          <span class="btn-meta">{{ currentSlotLabel }}</span>
+        </button>
+
+        <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
+          <span class="btn-mode">Longest</span>
+          <span class="btn-meta">{{ currentSlotLabel2 }}</span>
+        </button>
+
+        <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
+          <span class="btn-mode">Random</span>
+          <span class="btn-meta">Play</span>
+        </button>
+
         </div>
       </header>
 
@@ -944,11 +1051,40 @@ createApp({
             </button>
           </div>
 
-          <div v-if="message" class="message" :class="messageKind">{{ message }}</div>
+          <div class="hud-bottom">
+            <div class="message compact" :class="[messageKind, { show: messageVisible }]">
+              {{ message || "\u00A0" }}
+            </div>
+            <div class="help" ref="help">
+              <button
+                class="help-btn"
+                type="button"
+                @click="helpOpen ? closeHelp() : openHelp()"
+                aria-label="Help"
+                title="Help"
+              >
+                {{ helpOpen ? "×" : "?" }}
+              </button>
 
-          <div class="microhint">
-            Tap to select. Tap the first tile to clear. Tap the last tile to submit. Press and drag to draw a path.
+              <div v-if="helpOpen" class="help-pop">
+                <div class="help-title">How to play</div>
+                <div class="help-text">
+                  Tap to select. Tap the first tile to clear. Tap the last tile to submit.
+                  Press and drag to draw a path.
+                </div>
+
+                <div class="help-title" style="margin-top: 10px;">Modes</div>
+                <ul class="help-list">
+                  <li><b>Daily</b> — same board all day.</li>
+                  <li><b>5-min</b> — board changes every 5 minutes.</li>
+                  <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes</li>
+                  <li><b>Random</b> — fresh board each time.</li>
+                </ul>
+              </div>
+            </div>
+
           </div>
+
         </div>
 
         <div class="found">
@@ -957,46 +1093,55 @@ createApp({
             <div class="found-count">{{ foundWords.length }}</div>
           </div>
 
-          <div v-if="foundWords.length === 0" class="found-empty">No words yet.</div>
+          <div v-if="foundWords.length === 0" class="found-empty">
+            No words yet.
+          </div>
 
           <ul v-else class="found-list">
-            <li v-for="w in foundWords" :key="w" class="found-item">{{ w }}</li>
+            <li v-for="w in foundWords" :key="w" class="found-item">
+              {{ w }}
+            </li>
           </ul>
 
+          <!-- end-of-game controls -->
           <div v-if="gameOver" style="margin-top: 12px;">
-          <div v-if="gameOver" class="results">
-            <div class="results-text">
-                {{ resultsText }}
-            </div>
-
-            </div>
-
-            <div v-if="gameOver" style="margin-top: 12px;">
-
-            <button class="btn" type="button" @click="showSolutions = !showSolutions" :disabled="solving">
-            {{ solutionsButtonText }}
+            <button
+              class="btn"
+              type="button"
+              @click="showSolutions = !showSolutions"
+              :disabled="solving"
+            >
+              {{ solutionsButtonText }}
             </button>
-
-
 
             <div v-if="showSolutions" style="margin-top: 10px;">
               <div style="font-weight: 900; margin-bottom: 6px;">
                 Missed ({{ missedSolutions.length }})
               </div>
-              <div v-if="missedSolutions.length === 0" class="found-empty">None — nice!</div>
+
+              <div v-if="missedSolutions.length === 0" class="found-empty">
+                None — nice!
+              </div>
+
               <ul v-else class="found-list">
-                <li v-for="w in missedSolutions" :key="'m'+w" class="found-item">{{ w }}</li>
+                <li v-for="w in missedSolutions" :key="'m'+w" class="found-item">
+                  {{ w }}
+                </li>
               </ul>
 
               <div style="font-weight: 900; margin: 12px 0 6px;">
                 All solutions ({{ allSolutions.length }})
               </div>
+
               <ul class="found-list">
-                <li v-for="w in allSolutions" :key="'a'+w" class="found-item">{{ w }}</li>
+                <li v-for="w in allSolutions" :key="'a'+w" class="found-item">
+                  {{ w }}
+                </li>
               </ul>
             </div>
           </div>
         </div>
+
       </section>
     </main>
   `
