@@ -377,8 +377,20 @@ createApp({
 
     openHelp() {
       this.helpOpen = true;
+
+      this.$nextTick(() => {
+        const pop = this.$refs.helpPop;
+        if (pop && pop.scrollIntoView) {
+          pop.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest"
+          });
+        }
+      });
+
       document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
     },
+
 
     closeHelp() {
       this.helpOpen = false;
@@ -1066,7 +1078,7 @@ createApp({
                 {{ helpOpen ? "×" : "?" }}
               </button>
 
-              <div v-if="helpOpen" class="help-pop">
+            <div v-if="helpOpen" class="help-pop" ref="helpPop">
                 <div class="help-title">How to play</div>
                 <div class="help-text">
                   Tap to select. Tap the first tile to clear. Tap the last tile to submit.
