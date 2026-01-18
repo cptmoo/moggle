@@ -335,6 +335,10 @@ body {
 .help {
   position: relative;
 }
+.help-icon {
+  font-weight: 900;
+  padding: 0 2px;
+}
 
 .help-btn {
   list-style: none;

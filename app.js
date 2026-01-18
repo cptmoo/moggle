@@ -1092,6 +1092,9 @@ createApp({
                   <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes</li>
                   <li><b>Random</b> — fresh board each time.</li>
                 </ul>
+                <div class="help-text">
+                  Tap the <span class="help-icon">⧉</span> button next to your score after the game ends to copy your results and share them.
+                </div>
               </div>
             </div>
 
