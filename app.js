@@ -550,6 +550,12 @@ createApp({
       });
     },
 
+    isFoundSolution(wordUpper) {
+      // wordUpper is like "CHUG" (uppercase)
+      return this.foundSet.has(String(wordUpper).toLowerCase());
+    },
+
+
     // ---------- solver ----------
     async solveBoard() {
       if (!this.dictReady) return;
@@ -1128,32 +1134,28 @@ createApp({
             >
               {{ solutionsButtonText }}
             </button>
-
             <div v-if="showSolutions" style="margin-top: 10px;">
               <div style="font-weight: 900; margin-bottom: 6px;">
-                Missed ({{ missedSolutions.length }})
-              </div>
-
-              <div v-if="missedSolutions.length === 0" class="found-empty">
-                None — nice!
-              </div>
-
-              <ul v-else class="found-list">
-                <li v-for="w in missedSolutions" :key="'m'+w" class="found-item">
-                  {{ w }}
-                </li>
-              </ul>
-
-              <div style="font-weight: 900; margin: 12px 0 6px;">
                 All solutions ({{ allSolutions.length }})
               </div>
 
-              <ul class="found-list">
-                <li v-for="w in allSolutions" :key="'a'+w" class="found-item">
+              <div v-if="allSolutions.length === 0" class="found-empty">
+                No valid words on this board.
+              </div>
+
+              <ul v-else class="found-list">
+                <li
+                  v-for="w in allSolutions"
+                  :key="'a'+w"
+                  class="found-item solution"
+                  :class="isFoundSolution(w) ? 'found' : 'missed'"
+                >
                   {{ w }}
                 </li>
               </ul>
             </div>
+
+            
           </div>
         </div>
 

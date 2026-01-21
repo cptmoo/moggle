@@ -452,3 +452,14 @@ body {
   background: #fff;
 }
 
+.found-item.solution.found {
+  border-color: rgba(22, 163, 74, 0.30);
+  background: rgba(22, 163, 74, 0.08);
+  color: var(--good);
+}
+
+.found-item.solution.missed {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.07);
+  color: var(--bad);
+}
