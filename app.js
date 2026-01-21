@@ -5,7 +5,6 @@ const { createApp } = Vue;
  * 16 items, each an array of faces (strings). Use "Qu" for Qu.
  */
 const DICE = [
-  // TODO: replace with your real 16 dice
   ["A", "A", "E", "E", "G", "N"],
   ["E", "L", "R", "T", "T", "Y"],
   ["A", "O", "O", "T", "T", "W"],
@@ -70,8 +69,11 @@ createApp({
       messageVisible: false,
 
       // Mode / seed info
-      modeLabel: "",     // "Random" or "Official 10:05"
+      modeLabel: "",     // e.g. "Random", "Daily 22-Jan", "5-min 10:05", "Longest 10:04"
       seedLabel: "",
+
+      // Which mode is currently active (for saving)
+      modeType: "", // "daily" | "official" | "longest" | "random"
 
       // Selection
       selecting: false,
@@ -125,14 +127,14 @@ createApp({
     },
 
     displayScore() {
-    // Longest-word mode: show length of longest word found
-    if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
+      // Longest-word mode: show length of longest word found
+      if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
         const w = this.longestFoundWord();
         return w ? w.length : 0;
-    }
+      }
 
-    // Normal modes: show points
-    return this.score;
+      // Normal modes: show points
+      return this.score;
     },
 
     polylinePointsAttr() {
@@ -147,8 +149,7 @@ createApp({
 
     statusText() {
       if (!this.dictReady) return "Loading dictionary…";
-        // Always show the mode label if we have one (even after gameOver)
-        return this.modeLabel ? this.modeLabel : "";
+      return this.modeLabel ? this.modeLabel : "";
     },
 
     canInteract() {
@@ -160,13 +161,15 @@ createApp({
       const hh = String(d.getHours()).padStart(2, "0");
       const mm = String(Math.floor(d.getMinutes() / 5) * 5).padStart(2, "0");
       return `${hh}:${mm}`;
-    }, 
-    currentSlotLabel2() {
-    const d = this.now;
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(Math.floor(d.getMinutes() / 2) * 2).padStart(2, "0");
-    return `${hh}:${mm}`;
     },
+
+    currentSlotLabel2() {
+      const d = this.now;
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(Math.floor(d.getMinutes() / 2) * 2).padStart(2, "0");
+      return `${hh}:${mm}`;
+    },
+
     dailyLabel() {
       const d = this.now; // uses your 1s ticking clock
       const dd = String(d.getDate()).padStart(2, "0");
@@ -175,37 +178,38 @@ createApp({
       return `${dd}-${mon}`;
     },
 
-
     missedCount() {
       return this.missedSolutions.length;
     },
+
     resultsText() {
-    if (!this.gameOver) return "";
+      if (!this.gameOver) return "";
 
-    const label = this.modeLabel ? this.modeLabel : "Game";
+      const label = this.modeLabel ? this.modeLabel : "Game";
 
-    // Longest-word mode
-    if (label.startsWith("Longest")) {
+      // Longest-word mode
+      if (label.startsWith("Longest")) {
         const w = this.longestFoundWord();
         if (!w) return `${label} · No valid word`;
-
         return `${label} · ${w} · ${w.length} letters`;
-    }
+      }
 
-    // Normal scoring mode
-    const pts = this.score;
-    const words = this.foundWords.length;
-    return `${label} · ${pts} pts · ${words} words`;
+      // Normal scoring mode
+      const pts = this.score;
+      const words = this.foundWords.length;
+      return `${label} · ${pts} pts · ${words} words`;
     },
+
     longestSolutionWord() {
-        if (!this.allSolutions || this.allSolutions.length === 0) return null;
+      if (!this.allSolutions || this.allSolutions.length === 0) return null;
 
-        let best = this.allSolutions[0];
-        for (const w of this.allSolutions) {
-            if (w.length > best.length) best = w;
-        }
-        return best;
+      let best = this.allSolutions[0];
+      for (const w of this.allSolutions) {
+        if (w.length > best.length) best = w;
+      }
+      return best;
     },
+
     foundLengthRanks() {
       // Only used for colouring after time is up
       const lengths = new Set();
@@ -217,33 +221,27 @@ createApp({
       const sorted = Array.from(lengths).sort((a, b) => b - a);
       const maxLen = sorted[0] ?? 0;
 
-      // second-longest DISTINCT length (not “second word”)
+      // second-longest DISTINCT length
       const secondLen = sorted.find(n => n < maxLen) ?? 0;
 
       return { maxLen, secondLen };
     },
+
     solutionsButtonText() {
-        if (this.solving) return "Solving…";
-        if (this.showSolutions) return "Hide solutions";
+      if (this.solving) return "Solving…";
+      if (this.showSolutions) return "Hide solutions";
 
-        // Longest-word mode
-        if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
-            const w = this.longestSolutionWord;
-            if (!w) return "Show solutions (no valid word)";
-            return "Show solutions (" + w.length + " letters)";
-        }
+      // Longest-word mode
+      if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
+        const w = this.longestSolutionWord;
+        if (!w) return "Show solutions (no valid word)";
+        return "Show solutions (" + w.length + " letters)";
+      }
 
-        // Normal modes
-        return "Show solutions (" + this.missedSolutions.length + " missed)";
+      // Normal modes
+      return "Show solutions (" + this.missedSolutions.length + " missed)";
     }
-
-
   },
-
-
-
-
-
 
   async mounted() {
     this.rebuildGeometry();
@@ -258,7 +256,10 @@ createApp({
 
     await this.loadDictionary();
 
-    // Default: start with random (as you wanted)
+    // Prune old finished games on startup
+    this.pruneFinishedSaves();
+
+    // Default: start with random
     this.playRandom();
 
     setTimeout(() => {
@@ -293,14 +294,15 @@ createApp({
       if (len >= 8) return 11;
       return 0;
     },
-    copyResults() {
-    if (!this.resultsText) return;
 
-    navigator.clipboard.writeText(this.resultsText).then(() => {
+    copyResults() {
+      if (!this.resultsText) return;
+
+      navigator.clipboard.writeText(this.resultsText).then(() => {
         this.showMessage("Results copied!", "good");
-    }).catch(() => {
+      }).catch(() => {
         this.showMessage("Could not copy results.", "bad");
-    });
+      });
     },
 
     // ---------- dictionary + trie ----------
@@ -356,6 +358,192 @@ createApp({
       };
     },
 
+    // ---------- localStorage: finished game saving ----------
+    finishedPrefix() {
+      return "moggle:finished:";
+    },
+
+    saveKey(modeType, slot) {
+      // slot can include spaces/colons, so encode it
+      return `${this.finishedPrefix()}${modeType}:${encodeURIComponent(slot)}`;
+    },
+
+    parseSeed(seedString) {
+      // seedString formats:
+      //   moggle|daily|YYYY-MM-DD
+      //   moggle|official|YYYY-MM-DD HH:MMZ
+      //   moggle|official-longest|YYYY-MM-DD HH:MMZ
+      const parts = String(seedString).split("|");
+      if (parts.length < 3) return null;
+      const kind = parts[1];
+      const slot = parts.slice(2).join("|"); // just in case
+      return { kind, slot };
+    },
+
+    slotForDailyLocal() {
+      // Local calendar day (matches your playDaily seeding)
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    },
+
+    loadFinished(modeType, slot) {
+      try {
+        const raw = localStorage.getItem(this.saveKey(modeType, slot));
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (!data || !data.seedString || !Array.isArray(data.foundWords) || !data.finishedAt) return null;
+        return data;
+      } catch {
+        return null;
+      }
+    },
+
+    saveFinishedCurrentGame() {
+      // Save only for the 3 seeded modes, only when finished
+      if (!this.gameOver) return;
+      if (!this.seedLabel) return;
+      if (!this.modeType) return;
+      if (this.modeType === "random") return;
+
+      const parsed = this.parseSeed(this.seedLabel);
+      if (!parsed) return;
+
+      const payload = {
+        v: 1,
+        modeType: this.modeType,
+        slot: parsed.slot,
+        seedString: this.seedLabel,
+        foundWords: this.foundWords, // already UPPERCASE
+        finishedAt: Date.now()
+      };
+
+      try {
+        localStorage.setItem(this.saveKey(this.modeType, parsed.slot), JSON.stringify(payload));
+      } catch (e) {
+        console.warn("Could not save finished game:", e);
+      }
+
+      this.pruneFinishedSaves();
+    },
+
+    pruneFinishedSaves() {
+      // Keep storage small:
+      // - Daily: keep 30 days
+      // - 5-min + Longest: keep 48 hours
+      // - Also cap total number of saved games (newest kept)
+      const MAX_TOTAL = 400;
+
+      const now = Date.now();
+      const msHour = 3600000;
+      const msDay = 86400000;
+
+      const maxAgeByMode = {
+        daily: 30 * msDay,
+        official: 48 * msHour,
+        longest: 48 * msHour
+      };
+
+      const prefix = this.finishedPrefix();
+      const items = [];
+
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(prefix)) continue;
+
+        let data = null;
+        try {
+          data = JSON.parse(localStorage.getItem(k));
+        } catch {
+          // corrupted entry
+          items.push({ key: k, finishedAt: 0, modeType: "unknown", corrupted: true });
+          continue;
+        }
+
+        const finishedAt = Number(data?.finishedAt || 0);
+        const modeType = String(data?.modeType || "");
+
+        items.push({ key: k, finishedAt, modeType, corrupted: false });
+      }
+
+      // Remove corrupted or too-old
+      for (const it of items) {
+        if (it.corrupted) {
+          try { localStorage.removeItem(it.key); } catch {}
+          continue;
+        }
+
+        const maxAge = maxAgeByMode[it.modeType];
+        if (!maxAge) {
+          // unknown mode -> remove (keeps storage clean if formats ever change)
+          try { localStorage.removeItem(it.key); } catch {}
+          continue;
+        }
+
+        if (!it.finishedAt || (now - it.finishedAt) > maxAge) {
+          try { localStorage.removeItem(it.key); } catch {}
+        }
+      }
+
+      // Rebuild list after removals to enforce MAX_TOTAL cap
+      const kept = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(prefix)) continue;
+        try {
+          const data = JSON.parse(localStorage.getItem(k));
+          kept.push({ key: k, finishedAt: Number(data?.finishedAt || 0) });
+        } catch {
+          // If it became corrupted, remove it
+          try { localStorage.removeItem(k); } catch {}
+        }
+      }
+
+      kept.sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)); // newest first
+      if (kept.length > MAX_TOTAL) {
+        for (let i = MAX_TOTAL; i < kept.length; i++) {
+          try { localStorage.removeItem(kept[i].key); } catch {}
+        }
+      }
+    },
+
+    async loadFinishedIntoUI(modeType, seedString) {
+      // If saved, rebuild board from seed, set gameOver, restore foundWords, run solver.
+      const parsed = this.parseSeed(seedString);
+      if (!parsed) return false;
+
+      const saved = this.loadFinished(modeType, parsed.slot);
+      if (!saved) return false;
+      if (saved.seedString !== seedString) return false;
+
+      // Build board from seed
+      this.clearSelection();
+      this.clearMessage();
+
+      this.showSolutions = false;
+      this.allSolutions = [];
+      this.missedSolutions = [];
+
+      this.startNewBoardFromSeed(seedString);
+
+      // startNewBoardFromSeed starts the timer and resets words; override + lock
+      this.stopTimer();
+      this.gameOver = true;
+      this.timeLeftSec = 0;
+
+      // Restore found words
+      this.foundWords = saved.foundWords.slice();
+      this.foundSet = new Set(this.foundWords.map(w => String(w).toLowerCase()));
+
+      // Solve for solutions/missed count display
+      await this.solveBoard();
+      this.showSolutions = false;
+
+      return true;
+    },
+
     // ---------- timer ----------
     startTimer() {
       this.stopTimer();
@@ -383,18 +571,17 @@ createApp({
       this.stopTimer();
       this.gameOver = true;
       this.clearSelection();
-      const label = this.modeLabel ? this.modeLabel : "Game";
       this.showMessage("Time’s up!", "info");
-
 
       // Run solver automatically at end
       await this.solveBoard();
-      // don't show the solutions
       this.showSolutions = false;
+
+      // Save finished (Daily / 5-min / Longest)
+      this.saveFinishedCurrentGame();
     },
 
     // ------------- help section handling ------------
-
     openHelp() {
       this.helpOpen = true;
 
@@ -411,48 +598,47 @@ createApp({
       document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
     },
 
-
     closeHelp() {
       this.helpOpen = false;
     },
 
     onOutsideHelp(e) {
-      // If the click was inside the help panel or button, ignore it
       const helpEl = this.$refs.help;
       if (helpEl && helpEl.contains(e.target)) {
-        // reattach listener so the *next* outside click closes it
         document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
         return;
       }
       this.closeHelp();
     },
 
-
     // ---------- game selection ----------
-
-    playDaily() {
+    async playDaily() {
       if (!this.dictReady) return;
 
+      this.modeType = "daily";
       this.gameLengthSec = this.gameLengthSecRegular;
 
-      // Seed by *local* calendar day
-      const d = new Date();
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-
-      const slot = `${yyyy}-${mm}-${dd}`;
+      const slot = this.slotForDailyLocal();
       const seedString = `moggle|daily|${slot}`;
 
       this.modeLabel = `Daily ${this.dailyLabel}`;
       this.seedLabel = seedString;
 
+      // If finished already, load the finished screen
+      const loaded = await this.loadFinishedIntoUI("daily", seedString);
+      if (loaded) {
+        this.showMessage("Already completed.", "info", 1200);
+        return;
+      }
+
+      // Otherwise start fresh
       this.startNewBoardFromSeed(seedString);
     },
 
-    playOfficial() {
+    async playOfficial() {
       if (!this.dictReady) return;
 
+      this.modeType = "official";
       this.gameLengthSec = this.gameLengthSecRegular;
 
       const d = new Date();
@@ -468,40 +654,51 @@ createApp({
       this.modeLabel = `5-min ${this.currentSlotLabel}`;
       this.seedLabel = seedString;
 
+      const loaded = await this.loadFinishedIntoUI("official", seedString);
+      if (loaded) {
+        this.showMessage("Already completed.", "info", 1200);
+        return;
+      }
+
       this.startNewBoardFromSeed(seedString);
     },
 
-    playOfficialLongest() {
-        if (!this.dictReady) return;
+    async playOfficialLongest() {
+      if (!this.dictReady) return;
 
-        // 1 minute round
-        this.gameLengthSec = this.gameLengthSecLongest;
+      this.modeType = "longest";
+      this.gameLengthSec = this.gameLengthSecLongest;
 
-        // Seed changes every 2 minutes (UTC)
-        const d = new Date();
-        const yyyy = d.getUTCFullYear();
-        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(d.getUTCDate()).padStart(2, "0");
-        const hh = String(d.getUTCHours()).padStart(2, "0");
-        const mins2 = String(Math.floor(d.getUTCMinutes() / 2) * 2).padStart(2, "0");
+      const d = new Date();
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mins2 = String(Math.floor(d.getUTCMinutes() / 2) * 2).padStart(2, "0");
 
-        const slot = `${yyyy}-${mm}-${dd} ${hh}:${mins2}Z`;
-        const seedString = `moggle|official-longest|${slot}`;
+      const slot = `${yyyy}-${mm}-${dd} ${hh}:${mins2}Z`;
+      const seedString = `moggle|official-longest|${slot}`;
 
-        this.modeLabel = `Longest ${this.currentSlotLabel2}`;
-        this.seedLabel = seedString;
+      this.modeLabel = `Longest ${this.currentSlotLabel2}`;
+      this.seedLabel = seedString;
 
-        this.startNewBoardFromSeed(seedString);
+      const loaded = await this.loadFinishedIntoUI("longest", seedString);
+      if (loaded) {
+        this.showMessage("Already completed.", "info", 1200);
+        return;
+      }
+
+      this.startNewBoardFromSeed(seedString);
     },
 
     longestFoundWord() {
-    if (this.foundWords.length === 0) return null;
+      if (this.foundWords.length === 0) return null;
 
-    let best = this.foundWords[0];
-    for (const w of this.foundWords) {
+      let best = this.foundWords[0];
+      for (const w of this.foundWords) {
         if (w.length > best.length) best = w;
-    }
-    return best;
+      }
+      return best;
     },
 
     foundWordClass(wordUpper) {
@@ -512,17 +709,16 @@ createApp({
 
       const { maxLen, secondLen } = this.foundLengthRanks;
 
-      // If the best you did was 4 letters, nothing should colour anyway (handled above)
       if (len === maxLen && maxLen > 4) return "found-best";
       if (len === secondLen && secondLen > 4) return "found-second";
 
       return "";
     },
 
-
     playRandom() {
       if (!this.dictReady) return;
 
+      this.modeType = "random";
       this.gameLengthSec = this.gameLengthSecRegular;
 
       let seedString = `moggle|random|${Date.now()}`;
@@ -585,10 +781,8 @@ createApp({
     },
 
     isFoundSolution(wordUpper) {
-      // wordUpper is like "CHUG" (uppercase)
       return this.foundSet.has(String(wordUpper).toLowerCase());
     },
-
 
     // ---------- solver ----------
     async solveBoard() {
@@ -596,8 +790,6 @@ createApp({
       if (this.solving) return;
 
       this.solving = true;
-
-      // Let UI update (so “solving…” can render on slower devices)
       await new Promise(requestAnimationFrame);
 
       const root = this.trieRoot;
@@ -621,7 +813,7 @@ createApp({
         }
       }
 
-      // Flatten tiles and normalise to lowercase strings: 'a'..'z' or 'qu'
+      // Flatten tiles and normalise to lowercase strings
       const tiles = [];
       for (let r = 0; r < 4; r++) {
         for (let c = 0; c < 4; c++) {
@@ -634,7 +826,6 @@ createApp({
       const visited = new Array(16).fill(false);
 
       const stepNode = (node, tileStr) => {
-        // tileStr is 'qu' or 'a'...'z'
         if (tileStr === "qu") {
           const n1 = node.next["q"];
           if (!n1) return null;
@@ -759,7 +950,7 @@ createApp({
 
       if (autoClearMs) {
         this.messageTimer = setTimeout(() => {
-          this.messageVisible = false; // triggers fade-out
+          this.messageVisible = false;
           this.messageTimer = null;
         }, autoClearMs);
       }
@@ -968,7 +1159,6 @@ createApp({
       this.foundWords.unshift(wordUpper);
       this.foundSet.add(word);
 
-      // feedback based on word length
       this.showMessage(this.pickSuccessMessage(wordUpper.length), "good", 1100);
 
       this.clearSelection();
@@ -977,49 +1167,46 @@ createApp({
 
   template: `
     <main class="app">
-        <header class="topbar">
+      <header class="topbar">
         <div class="brand">
-            <div class="title">Moggle</div>
-            <div class="time time--top">{{ timeText }}</div>
-            <div class="subtitle">
+          <div class="title">Moggle</div>
+          <div class="time time--top">{{ timeText }}</div>
+          <div class="subtitle">
             <span v-if="statusText" class="status"> {{ statusText }} · </span>
             Score: <span class="score">{{ displayScore }}</span>
-              <button
-                v-if="gameOver"
-                class="copybtn"
-                type="button"
-                @click="copyResults"
-                aria-label="Copy results"
-                title="Copy results"
-              >
-                ⧉
-              </button>
-            </div>
+            <button
+              v-if="gameOver"
+              class="copybtn"
+              type="button"
+              @click="copyResults"
+              aria-label="Copy results"
+              title="Copy results"
+            >
+              ⧉
+            </button>
+          </div>
         </div>
 
         <div class="timerbar">
-          
-        <button class="btn mini" type="button" @click="playDaily" :disabled="!dictReady">
-          <span class="btn-mode">Daily</span>
-          <span class="btn-meta">{{ dailyLabel }}</span>
-        </button>
+          <button class="btn mini" type="button" @click="playDaily" :disabled="!dictReady">
+            <span class="btn-mode">Daily</span>
+            <span class="btn-meta">{{ dailyLabel }}</span>
+          </button>
 
+          <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
+            <span class="btn-mode">5-min</span>
+            <span class="btn-meta">{{ currentSlotLabel }}</span>
+          </button>
 
-        <button class="btn mini" type="button" @click="playOfficial" :disabled="!dictReady">
-          <span class="btn-mode">5-min</span>
-          <span class="btn-meta">{{ currentSlotLabel }}</span>
-        </button>
+          <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
+            <span class="btn-mode">Longest</span>
+            <span class="btn-meta">{{ currentSlotLabel2 }}</span>
+          </button>
 
-        <button class="btn mini" type="button" @click="playOfficialLongest" :disabled="!dictReady">
-          <span class="btn-mode">Longest</span>
-          <span class="btn-meta">{{ currentSlotLabel2 }}</span>
-        </button>
-
-        <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
-          <span class="btn-mode">Random</span>
-          <span class="btn-meta">Play</span>
-        </button>
-
+          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
+            <span class="btn-mode">Random</span>
+            <span class="btn-meta">Play</span>
+          </button>
         </div>
       </header>
 
@@ -1039,7 +1226,7 @@ createApp({
             preserveAspectRatio="none"
           >
             <defs>
-            <mask
+              <mask
                 id="tileCutoutMask"
                 maskUnits="userSpaceOnUse"
                 maskContentUnits="userSpaceOnUse"
@@ -1047,7 +1234,7 @@ createApp({
                 y="0"
                 :width="boardW"
                 :height="boardH"
-                >
+              >
                 <rect x="0" y="0" :width="boardW" :height="boardH" fill="white" />
                 <rect
                   v-for="(t, i) in cutouts"
@@ -1107,6 +1294,7 @@ createApp({
             <div class="message compact" :class="[messageKind, { show: messageVisible }]">
               {{ message || "\u00A0" }}
             </div>
+
             <div class="help" ref="help">
               <button
                 class="help-btn"
@@ -1118,7 +1306,7 @@ createApp({
                 {{ helpOpen ? "×" : "?" }}
               </button>
 
-            <div v-if="helpOpen" class="help-pop" ref="helpPop">
+              <div v-if="helpOpen" class="help-pop" ref="helpPop">
                 <div class="help-title">How to play</div>
                 <div class="help-text">
                   Tap to select. Tap the first tile to clear. Tap the last tile to submit.
@@ -1132,14 +1320,13 @@ createApp({
                   <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes</li>
                   <li><b>Random</b> — fresh board each time.</li>
                 </ul>
+
                 <div class="help-text">
                   Tap the <span class="help-icon">⧉</span> button next to your score after the game ends to copy your results and share them.
                 </div>
               </div>
             </div>
-
           </div>
-
         </div>
 
         <div class="found">
@@ -1173,6 +1360,7 @@ createApp({
             >
               {{ solutionsButtonText }}
             </button>
+
             <div v-if="showSolutions" style="margin-top: 10px;">
               <div style="font-weight: 900; margin-bottom: 6px;">
                 All solutions ({{ allSolutions.length }})
@@ -1193,8 +1381,6 @@ createApp({
                 </li>
               </ul>
             </div>
-
-            
           </div>
         </div>
 
