@@ -206,7 +206,22 @@ createApp({
         }
         return best;
     },
+    foundLengthRanks() {
+      // Only used for colouring after time is up
+      const lengths = new Set();
 
+      for (const w of this.foundWords) {
+        lengths.add(String(w).length); // "QU" already counts as 2 chars
+      }
+
+      const sorted = Array.from(lengths).sort((a, b) => b - a);
+      const maxLen = sorted[0] ?? 0;
+
+      // second-longest DISTINCT length (not “second word”)
+      const secondLen = sorted.find(n => n < maxLen) ?? 0;
+
+      return { maxLen, secondLen };
+    },
     solutionsButtonText() {
         if (this.solving) return "Solving…";
         if (this.showSolutions) return "Hide solutions";
@@ -224,6 +239,11 @@ createApp({
 
 
   },
+
+
+
+
+
 
   async mounted() {
     this.rebuildGeometry();
@@ -484,6 +504,20 @@ createApp({
     return best;
     },
 
+    foundWordClass(wordUpper) {
+      if (!this.gameOver) return ""; // only after time finishes
+
+      const len = String(wordUpper).length;
+      if (len <= 4) return ""; // never colour 4-letter words
+
+      const { maxLen, secondLen } = this.foundLengthRanks;
+
+      // If the best you did was 4 letters, nothing should colour anyway (handled above)
+      if (len === maxLen && maxLen > 4) return "found-best";
+      if (len === secondLen && secondLen > 4) return "found-second";
+
+      return "";
+    },
 
 
     playRandom() {
@@ -1119,7 +1153,12 @@ createApp({
           </div>
 
           <ul v-else class="found-list">
-            <li v-for="w in foundWords" :key="w" class="found-item">
+            <li
+              v-for="w in foundWords"
+              :key="w"
+              class="found-item"
+              :class="foundWordClass(w)"
+            >
               {{ w }}
             </li>
           </ul>

@@ -463,3 +463,15 @@ body {
   background: rgba(220, 38, 38, 0.07);
   color: var(--bad);
 }
+
+
+/* Player found-word highlights (only applied after game over via class) */
+.found-item.found-best {
+  border-color: rgba(22, 163, 74, 0.30);
+  background: rgba(22, 163, 74, 0.637);
+}
+
+.found-item.found-second {
+  border-color: rgba(22, 163, 74, 0.22);
+  background: rgba(22, 163, 74, 0.199);
+}
