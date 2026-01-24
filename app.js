@@ -955,9 +955,6 @@ createApp({
         "J","K","L","L",
         "M","M",
 
-        // Structure helpers
-        "N","N",
-        "R","S","T"
       ];
       const bag = WEIRD_BAG_A_TO_M;
       const rolled = [];
@@ -1003,10 +1000,34 @@ createApp({
 
     // e) XYZ: N–Z using frequency bag
     weirdBuildXYZ(rand) {
-      const bag = WEIRD_FREQ_BAG.filter(ch => inRangeAZ(ch, "N", "Z"));
+      const WEIRD_BAG_N_TO_Z = [
+        // Vowels (boosted slightly)
+        "O","O",
+        "U","U",
+
+        // Core glue consonants
+        "N","N",
+        "R","R",
+        "S","S",
+        "T","T",
+
+        // Added structure
+        "W", "P",
+
+        // Semi-vowel / spice
+        "Y",
+
+        // Rare letter
+        "Z",
+
+        // Wildcard
+        "Qu"
+      ];
+      const bag = WEIRD_BAG_N_TO_Z;
       const rolled = [];
       for (let i = 0; i < 16; i++) rolled.push(this.pickFromBag(rand, bag));
       return rolled;
+
     },
 
     // ---------- UI helpers ----------
