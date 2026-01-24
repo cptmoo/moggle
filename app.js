@@ -23,6 +23,84 @@ const DICE = [
   ["D", "E", "I", "L", "R", "X"]
 ];
 
+// ---- Weird: 5-variant rotating mode ----
+
+// a) Hard mode: reverse-ish frequency bag
+const WEIRD_RULES_REVERSED = [
+  "Z","Z","Z","X","X","J","J","K","K","Qu","Qu",
+  "B","B","C","C","D","D","F","F","G","G",
+  "E","A","O","T","I","N","S","H","R","L"
+];
+
+// Frequency-ish bag (no Q tile; "Qu" instead).
+// Used for ABC (A–M) and XYZ (N–Z).
+const WEIRD_FREQ_BAG = [
+  // E (12)
+  "E","E","E","E","E","E","E","E","E","E","E","E",
+  // T (9)
+  "T","T","T","T","T","T","T","T","T",
+  // A (9)
+  "A","A","A","A","A","A","A","A","A",
+  // O (8)
+  "O","O","O","O","O","O","O","O",
+  // I (8)
+  "I","I","I","I","I","I","I","I",
+  // N (6)
+  "N","N","N","N","N","N",
+  // S (6)
+  "S","S","S","S","S","S",
+  // H (6)
+  "H","H","H","H","H","H",
+  // R (6)
+  "R","R","R","R","R","R",
+  // D (4)
+  "D","D","D","D",
+  // L (4)
+  "L","L","L","L",
+  // C (3)
+  "C","C","C",
+  // U (3)
+  "U","U","U",
+  // M (2)
+  "M","M",
+  // W (2)
+  "W","W",
+  // F (2)
+  "F","F",
+  // G (2)
+  "G","G",
+  // Y (2)
+  "Y","Y",
+  // P (2)
+  "P","P",
+  // singles
+  "B","V","K","J","X","Qu","Z"
+];
+
+// b) Voweltacular config: which single vowel all vowels become
+const VOWELTACULAR_VOWEL = "A";
+
+// d) Vowel-less config
+const VOWELLESS_VOWELS = ["A", "E", "I", "O", "U"]; // vowels used for the two forced tiles
+
+// Helper: normalise tile text for board
+function normTile(face) {
+  return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
+}
+
+function isVowelTile(tile) {
+  const t = String(tile).toUpperCase();
+  return t === "A" || t === "E" || t === "I" || t === "O" || t === "U";
+}
+
+function inRangeAZ(letter, start, end) {
+  const ch = String(letter).toUpperCase();
+  if (ch === "QU") return false;
+  if (ch.length !== 1) return false;
+  const code = ch.charCodeAt(0);
+  return code >= start.charCodeAt(0) && code <= end.charCodeAt(0);
+}
+
 // ---- Trie helpers for solver ----
 function makeNode() {
   return { next: Object.create(null), end: false };
@@ -41,10 +119,10 @@ createApp({
     return {
       // Board
       grid: [
-        ["T", "A", "P", "E"],
-        ["R", "S", "L", "N"],
-        ["O", "I", "D", "M"],
-        ["C", "H", "U", "G"]
+        ["P", "I", "C", "K"],
+        ["G", "A", "M", "E"],
+        ["M", "O", "D", "E"],
+        ["—", "—", "—", "—"]
       ],
 
       // Dictionary
@@ -62,18 +140,18 @@ createApp({
       gameLengthSec: 180,
       gameLengthSecRegular: 180,
       gameLengthSecLongest: 60,
-      timeLeftSec: 180,
+      timeLeftSec: 0,
       timerId: null,
-      gameOver: false,
+      gameOver: true,
       messageTimer: null,
       messageVisible: false,
 
       // Mode / seed info
-      modeLabel: "",     // e.g. "Random", "Daily 22-Jan", "5-min 10:05", "Longest 10:04"
+      modeLabel: "Pick game mode",
       seedLabel: "",
 
       // Which mode is currently active (for saving)
-      modeType: "", // "daily" | "official" | "longest" | "random"
+      modeType: "", // "daily" | "official" | "longest" | "weird"
 
       // Selection
       selecting: false,
@@ -120,20 +198,15 @@ createApp({
 
     score() {
       let total = 0;
-      for (const w of this.foundWords) {
-        total += this.scoreWord(w.length);
-      }
+      for (const w of this.foundWords) total += this.scoreWord(w.length);
       return total;
     },
 
     displayScore() {
-      // Longest-word mode: show length of longest word found
       if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
         const w = this.longestFoundWord();
         return w ? w.length : 0;
       }
-
-      // Normal modes: show points
       return this.score;
     },
 
@@ -171,7 +244,7 @@ createApp({
     },
 
     dailyLabel() {
-      const d = this.now; // uses your 1s ticking clock
+      const d = this.now;
       const dd = String(d.getDate()).padStart(2, "0");
       const mons = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       const mon = mons[d.getMonth()];
@@ -187,14 +260,12 @@ createApp({
 
       const label = this.modeLabel ? this.modeLabel : "Game";
 
-      // Longest-word mode
       if (label.startsWith("Longest")) {
         const w = this.longestFoundWord();
         if (!w) return `${label} · No valid word`;
         return `${label} · ${w} · ${w.length} letters`;
       }
 
-      // Normal scoring mode
       const pts = this.score;
       const words = this.foundWords.length;
       return `${label} · ${pts} pts · ${words} words`;
@@ -202,28 +273,17 @@ createApp({
 
     longestSolutionWord() {
       if (!this.allSolutions || this.allSolutions.length === 0) return null;
-
       let best = this.allSolutions[0];
-      for (const w of this.allSolutions) {
-        if (w.length > best.length) best = w;
-      }
+      for (const w of this.allSolutions) if (w.length > best.length) best = w;
       return best;
     },
 
     foundLengthRanks() {
-      // Only used for colouring after time is up
       const lengths = new Set();
-
-      for (const w of this.foundWords) {
-        lengths.add(String(w).length); // "QU" already counts as 2 chars
-      }
-
+      for (const w of this.foundWords) lengths.add(String(w).length);
       const sorted = Array.from(lengths).sort((a, b) => b - a);
       const maxLen = sorted[0] ?? 0;
-
-      // second-longest DISTINCT length
       const secondLen = sorted.find(n => n < maxLen) ?? 0;
-
       return { maxLen, secondLen };
     },
 
@@ -231,14 +291,12 @@ createApp({
       if (this.solving) return "Solving…";
       if (this.showSolutions) return "Hide solutions";
 
-      // Longest-word mode
       if (this.modeLabel && this.modeLabel.startsWith("Longest")) {
         const w = this.longestSolutionWord;
         if (!w) return "Show solutions (no valid word)";
         return "Show solutions (" + w.length + " letters)";
       }
 
-      // Normal modes
       return "Show solutions (" + this.missedSolutions.length + " missed)";
     }
   },
@@ -256,11 +314,10 @@ createApp({
 
     await this.loadDictionary();
 
-    // Prune old finished games on startup
     this.pruneFinishedSaves();
 
-    // Default: start with random
-    this.playRandom();
+    // Do not start a game on load; show placeholder.
+    this.showPickModeBoard();
 
     setTimeout(() => {
       this.rebuildGeometry();
@@ -278,9 +335,7 @@ createApp({
   watch: {
     selectedPath: {
       deep: true,
-      handler() {
-        this.refreshPathLine();
-      }
+      handler() { this.refreshPathLine(); }
     }
   },
 
@@ -297,12 +352,38 @@ createApp({
 
     copyResults() {
       if (!this.resultsText) return;
-
       navigator.clipboard.writeText(this.resultsText).then(() => {
         this.showMessage("Results copied!", "good");
       }).catch(() => {
         this.showMessage("Could not copy results.", "bad");
       });
+    },
+
+    // ---------- placeholder ----------
+    showPickModeBoard() {
+      this.grid = [
+        ["P", "I", "C", "K"],
+        ["G", "A", "M", "E"],
+        ["M", "O", "D", "E"],
+        ["—", "—", "—", "—"]
+      ];
+
+      this.modeType = "";
+      this.modeLabel = "Pick game mode";
+      this.seedLabel = "";
+
+      this.stopTimer();
+      this.gameOver = true;
+      this.timeLeftSec = 0;
+
+      this.clearSelection();
+      this.clearMessage();
+
+      this.foundWords = [];
+      this.foundSet = new Set();
+      this.showSolutions = false;
+      this.allSolutions = [];
+      this.missedSolutions = [];
     },
 
     // ---------- dictionary + trie ----------
@@ -323,7 +404,7 @@ createApp({
           const w = line.trim().toLowerCase();
           if (!w) continue;
           if (!/^[a-z]+$/.test(w)) continue;
-          if (w.length < 4) continue; // minimum for this game
+          if (w.length < 4) continue;
           set.add(w);
           trieInsert(root, w);
         }
@@ -359,12 +440,9 @@ createApp({
     },
 
     // ---------- localStorage: finished game saving ----------
-    finishedPrefix() {
-      return "moggle:finished:";
-    },
+    finishedPrefix() { return "moggle:finished:"; },
 
     saveKey(modeType, slot) {
-      // slot can include spaces/colons, so encode it
       return `${this.finishedPrefix()}${modeType}:${encodeURIComponent(slot)}`;
     },
 
@@ -373,15 +451,15 @@ createApp({
       //   moggle|daily|YYYY-MM-DD
       //   moggle|official|YYYY-MM-DD HH:MMZ
       //   moggle|official-longest|YYYY-MM-DD HH:MMZ
+      //   moggle|weird|<variantId>|YYYY-MM-DD HH:MMZ
       const parts = String(seedString).split("|");
       if (parts.length < 3) return null;
       const kind = parts[1];
-      const slot = parts.slice(2).join("|"); // just in case
+      const slot = parts.slice(2).join("|");
       return { kind, slot };
     },
 
     slotForDailyLocal() {
-      // Local calendar day (matches your playDaily seeding)
       const d = new Date();
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -402,11 +480,9 @@ createApp({
     },
 
     saveFinishedCurrentGame() {
-      // Save only for the 3 seeded modes, only when finished
       if (!this.gameOver) return;
       if (!this.seedLabel) return;
       if (!this.modeType) return;
-      if (this.modeType === "random") return;
 
       const parsed = this.parseSeed(this.seedLabel);
       if (!parsed) return;
@@ -416,7 +492,7 @@ createApp({
         modeType: this.modeType,
         slot: parsed.slot,
         seedString: this.seedLabel,
-        foundWords: this.foundWords, // already UPPERCASE
+        foundWords: this.foundWords,
         finishedAt: Date.now()
       };
 
@@ -430,10 +506,6 @@ createApp({
     },
 
     pruneFinishedSaves() {
-      // Keep storage small:
-      // - Daily: keep 30 days
-      // - 5-min + Longest: keep 48 hours
-      // - Also cap total number of saved games (newest kept)
       const MAX_TOTAL = 400;
 
       const now = Date.now();
@@ -443,7 +515,8 @@ createApp({
       const maxAgeByMode = {
         daily: 30 * msDay,
         official: 48 * msHour,
-        longest: 48 * msHour
+        longest: 48 * msHour,
+        weird: 48 * msHour
       };
 
       const prefix = this.finishedPrefix();
@@ -457,18 +530,15 @@ createApp({
         try {
           data = JSON.parse(localStorage.getItem(k));
         } catch {
-          // corrupted entry
           items.push({ key: k, finishedAt: 0, modeType: "unknown", corrupted: true });
           continue;
         }
 
         const finishedAt = Number(data?.finishedAt || 0);
         const modeType = String(data?.modeType || "");
-
         items.push({ key: k, finishedAt, modeType, corrupted: false });
       }
 
-      // Remove corrupted or too-old
       for (const it of items) {
         if (it.corrupted) {
           try { localStorage.removeItem(it.key); } catch {}
@@ -477,7 +547,6 @@ createApp({
 
         const maxAge = maxAgeByMode[it.modeType];
         if (!maxAge) {
-          // unknown mode -> remove (keeps storage clean if formats ever change)
           try { localStorage.removeItem(it.key); } catch {}
           continue;
         }
@@ -487,7 +556,6 @@ createApp({
         }
       }
 
-      // Rebuild list after removals to enforce MAX_TOTAL cap
       const kept = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
@@ -496,12 +564,11 @@ createApp({
           const data = JSON.parse(localStorage.getItem(k));
           kept.push({ key: k, finishedAt: Number(data?.finishedAt || 0) });
         } catch {
-          // If it became corrupted, remove it
           try { localStorage.removeItem(k); } catch {}
         }
       }
 
-      kept.sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)); // newest first
+      kept.sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
       if (kept.length > MAX_TOTAL) {
         for (let i = MAX_TOTAL; i < kept.length; i++) {
           try { localStorage.removeItem(kept[i].key); } catch {}
@@ -510,7 +577,6 @@ createApp({
     },
 
     async loadFinishedIntoUI(modeType, seedString) {
-      // If saved, rebuild board from seed, set gameOver, restore foundWords, run solver.
       const parsed = this.parseSeed(seedString);
       if (!parsed) return false;
 
@@ -518,7 +584,6 @@ createApp({
       if (!saved) return false;
       if (saved.seedString !== seedString) return false;
 
-      // Build board from seed
       this.clearSelection();
       this.clearMessage();
 
@@ -528,16 +593,13 @@ createApp({
 
       this.startNewBoardFromSeed(seedString);
 
-      // startNewBoardFromSeed starts the timer and resets words; override + lock
       this.stopTimer();
       this.gameOver = true;
       this.timeLeftSec = 0;
 
-      // Restore found words
       this.foundWords = saved.foundWords.slice();
       this.foundSet = new Set(this.foundWords.map(w => String(w).toLowerCase()));
 
-      // Solve for solutions/missed count display
       await this.solveBoard();
       this.showSolutions = false;
 
@@ -573,11 +635,9 @@ createApp({
       this.clearSelection();
       this.showMessage("Time’s up!", "info");
 
-      // Run solver automatically at end
       await this.solveBoard();
       this.showSolutions = false;
 
-      // Save finished (Daily / 5-min / Longest)
       this.saveFinishedCurrentGame();
     },
 
@@ -588,19 +648,14 @@ createApp({
       this.$nextTick(() => {
         const pop = this.$refs.helpPop;
         if (pop && pop.scrollIntoView) {
-          pop.scrollIntoView({
-            behavior: "smooth",
-            block: "nearest"
-          });
+          pop.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       });
 
       document.addEventListener("pointerdown", this.onOutsideHelp, { once: true });
     },
 
-    closeHelp() {
-      this.helpOpen = false;
-    },
+    closeHelp() { this.helpOpen = false; },
 
     onOutsideHelp(e) {
       const helpEl = this.$refs.help;
@@ -609,6 +664,39 @@ createApp({
         return;
       }
       this.closeHelp();
+    },
+
+    // ---------- Weird variants (extensible) ----------
+    weirdVariants() {
+      // Add more variants by appending objects here. Keep ids short + stable.
+      return [
+        { id: "hard", name: "Hard", build: this.weirdBuildHard },
+        { id: "vowel", name: "Voweltacular", build: this.weirdBuildVoweltacular },
+        { id: "abc", name: "ABC", build: this.weirdBuildABC },
+        { id: "vless", name: "Low vowels", build: this.weirdBuildVowelless },
+        { id: "xyz", name: "N to Z", build: this.weirdBuildXYZ }
+      ];
+    },
+
+    weirdVariantForSlotUTC(yyyy, mm, dd, hh, mins5) {
+      const variants = this.weirdVariants();
+      // Deterministic global rotation: advance every 5 minutes (UTC), modulo number of variants.
+      // We compute a simple index from a monotonically increasing "slot number".
+      const dayNum = Math.floor(Date.UTC(yyyy, mm - 1, dd) / 86400000);
+      const slotInDay = (Number(hh) * 12) + Math.floor(Number(mins5) / 5); // 12 slots per hour
+      const slotNum = dayNum * (24 * 12) + slotInDay;
+
+      const idx = ((slotNum % variants.length) + variants.length) % variants.length;
+      return variants[idx];
+    },
+
+    parseWeirdSlot(slotStr) {
+      // slotStr format: "<variantId>|YYYY-MM-DD HH:MMZ"
+      const parts = String(slotStr).split("|");
+      if (parts.length < 2) return null;
+      const variantId = parts[0];
+      const timeSlot = parts.slice(1).join("|");
+      return { variantId, timeSlot };
     },
 
     // ---------- game selection ----------
@@ -624,14 +712,12 @@ createApp({
       this.modeLabel = `Daily ${this.dailyLabel}`;
       this.seedLabel = seedString;
 
-      // If finished already, load the finished screen
       const loaded = await this.loadFinishedIntoUI("daily", seedString);
       if (loaded) {
         this.showMessage("Already completed.", "info", 1200);
         return;
       }
 
-      // Otherwise start fresh
       this.startNewBoardFromSeed(seedString);
     },
 
@@ -691,47 +777,85 @@ createApp({
       this.startNewBoardFromSeed(seedString);
     },
 
+    async playWeird() {
+      if (!this.dictReady) return;
+
+      this.modeType = "weird";
+      this.gameLengthSec = this.gameLengthSecRegular;
+
+      const d = new Date();
+      const yyyyN = d.getUTCFullYear();
+      const mmN = d.getUTCMonth() + 1;
+      const ddN = d.getUTCDate();
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mins5 = String(Math.floor(d.getUTCMinutes() / 5) * 5).padStart(2, "0");
+
+      const variant = this.weirdVariantForSlotUTC(yyyyN, mmN, ddN, hh, mins5);
+
+      const slotTime = `${yyyyN}-${String(mmN).padStart(2, "0")}-${String(ddN).padStart(2, "0")} ${hh}:${mins5}Z`;
+      const seedString = `moggle|weird|${variant.id}|${slotTime}`;
+
+      // Show variant name in the label
+      this.modeLabel = `Weird (${variant.name}) ${this.currentSlotLabel}`;
+      this.seedLabel = seedString;
+
+      const loaded = await this.loadFinishedIntoUI("weird", seedString);
+      if (loaded) {
+        this.showMessage("Already completed.", "info", 1200);
+        return;
+      }
+
+      this.startNewBoardFromSeed(seedString);
+    },
+
     longestFoundWord() {
       if (this.foundWords.length === 0) return null;
-
       let best = this.foundWords[0];
-      for (const w of this.foundWords) {
-        if (w.length > best.length) best = w;
-      }
+      for (const w of this.foundWords) if (w.length > best.length) best = w;
       return best;
     },
 
     foundWordClass(wordUpper) {
-      if (!this.gameOver) return ""; // only after time finishes
-
+      if (!this.gameOver) return "";
       const len = String(wordUpper).length;
-      if (len <= 4) return ""; // never colour 4-letter words
+      if (len <= 4) return "";
 
       const { maxLen, secondLen } = this.foundLengthRanks;
-
       if (len === maxLen && maxLen > 4) return "found-best";
       if (len === secondLen && secondLen > 4) return "found-second";
-
       return "";
     },
 
-    playRandom() {
-      if (!this.dictReady) return;
+    // ---------- board generation core ----------
+    rollNormalDice(rand) {
+      if (!Array.isArray(DICE) || DICE.length !== 16) return null;
 
-      this.modeType = "random";
-      this.gameLengthSec = this.gameLengthSecRegular;
-
-      let seedString = `moggle|random|${Date.now()}`;
-      if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-        const a = new Uint32Array(2);
-        crypto.getRandomValues(a);
-        seedString = `moggle|random|${a[0]}-${a[1]}-${Date.now()}`;
+      const idx = [...Array(16).keys()];
+      for (let i = idx.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [idx[i], idx[j]] = [idx[j], idx[i]];
       }
 
-      this.modeLabel = "Random";
-      this.seedLabel = seedString;
+      return idx.map(i => {
+        const die = DICE[i];
+        const face = die[Math.floor(rand() * die.length)];
+        return normTile(face);
+      });
+    },
 
-      this.startNewBoardFromSeed(seedString);
+    pickFromBag(rand, bag) {
+      const face = bag[Math.floor(rand() * bag.length)];
+      return normTile(face);
+    },
+
+    rolledToGrid(rolled16) {
+      const g = [];
+      for (let r = 0; r < 4; r++) {
+        const row = [];
+        for (let c = 0; c < 4; c++) row.push(rolled16[r * 4 + c]);
+        g.push(row);
+      }
+      return g;
     },
 
     startNewBoardFromSeed(seedString) {
@@ -747,30 +871,31 @@ createApp({
       const seed = this.fnv1a32(seedString);
       const rand = this.mulberry32(seed);
 
-      if (!Array.isArray(DICE) || DICE.length !== 16) {
-        this.showMessage("Paste your 16 dice into DICE in app.js.", "bad");
+      const parsed = this.parseSeed(seedString);
+      const kind = parsed?.kind || "";
+
+      let rolled = null;
+
+      if (kind === "weird") {
+        // Determine which weird variant from the seed slot
+        const slotInfo = this.parseWeirdSlot(parsed.slot);
+        const variantId = slotInfo?.variantId || "hard";
+
+        const variants = this.weirdVariants();
+        const variant = variants.find(v => v.id === variantId) || variants[0];
+
+        rolled = variant.build.call(this, rand);
+      } else {
+        // Normal rolling for daily/official/longest
+        rolled = this.rollNormalDice(rand);
+      }
+
+      if (!rolled || rolled.length !== 16) {
+        this.showMessage("Could not generate board.", "bad");
         return;
       }
 
-      const idx = [...Array(16).keys()];
-      for (let i = idx.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        [idx[i], idx[j]] = [idx[j], idx[i]];
-      }
-
-      const rolled = idx.map(i => {
-        const die = DICE[i];
-        const face = die[Math.floor(rand() * die.length)];
-        return (String(face).toLowerCase() === "qu") ? "Qu" : String(face).toUpperCase();
-      });
-
-      const g = [];
-      for (let r = 0; r < 4; r++) {
-        const row = [];
-        for (let c = 0; c < 4; c++) row.push(rolled[r * 4 + c]);
-        g.push(row);
-      }
-      this.grid = g;
+      this.grid = this.rolledToGrid(rolled);
 
       this.startTimer();
 
@@ -780,6 +905,111 @@ createApp({
       });
     },
 
+    // ---------- Weird variant builders ----------
+    // a) Hard: pick tiles from WEIRD_RULES_REVERSED uniformly
+    weirdBuildHard(rand) {
+      const rolled = [];
+      for (let i = 0; i < 16; i++) rolled.push(this.pickFromBag(rand, WEIRD_RULES_REVERSED));
+      return rolled;
+    },
+
+    // b) Voweltacular: normal dice, then all vowels -> single vowel (default A)
+    weirdBuildVoweltacular(rand) {
+      const VOWELS = new Set(["A","E","I","O","U"]);
+
+      // Build boosted frequency bag
+      const boostedBag = [];
+
+      for (const ch of WEIRD_FREQ_BAG) {
+        boostedBag.push(ch); // always include original
+
+        // Add extra copy for vowels (1.5× total ≈ add one extra every second vowel). Changed to <0.6
+        const t = String(ch).toUpperCase();
+        if (VOWELS.has(t) && rand() < 0.6) {
+          boostedBag.push(ch);
+        }
+      }
+
+      // Roll 16 tiles from the boosted bag
+      const rolled = [];
+      for (let i = 0; i < 16; i++) {
+        const face = boostedBag[Math.floor(rand() * boostedBag.length)];
+        rolled.push(face === "Qu" ? "Qu" : String(face).toUpperCase());
+      }
+
+      return rolled;
+    },
+
+
+    // c) ABC: A–M using frequency bag
+    weirdBuildABC(rand) {
+      const WEIRD_BAG_A_TO_M = [
+        // Vowels (kept deliberately modest)
+        "A","A",
+        "E","E",
+        "I","I",
+
+        // Core consonants
+        "B","C","D","D",
+        "F","G","H","H",
+        "J","K","L","L",
+        "M","M",
+
+        // Structure helpers
+        "N","N",
+        "R","S","T"
+      ];
+      const bag = WEIRD_BAG_A_TO_M;
+      const rolled = [];
+      for (let i = 0; i < 16; i++) rolled.push(this.pickFromBag(rand, bag));
+      return rolled;
+    },
+
+    // d) Vowel-less: no vowels except exactly two, forced into middle four tiles
+    weirdBuildVowelless(rand) {
+      // Build 16 consonant-only tiles from frequency bag (excluding vowels + "Qu")
+      const consonantBag = WEIRD_FREQ_BAG.filter(ch => {
+        const t = String(ch).toUpperCase();
+        if (t === "QU") return false;
+        if (t.length !== 1) return false;
+        if (t === "A" || t === "E" || t === "I" || t === "O" || t === "U") return false;
+        return t >= "A" && t <= "Z";
+      });
+
+      const rolled = [];
+      for (let i = 0; i < 16; i++) rolled.push(this.pickFromBag(rand, consonantBag));
+
+      // Middle 4 indices in a 4x4 grid: (1,1)(1,2)(2,1)(2,2) => 5,6,9,10
+      const middle = [5, 6, 9, 10];
+
+      // Pick 2 distinct middle positions
+      const picks = middle.slice();
+      for (let i = picks.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [picks[i], picks[j]] = [picks[j], picks[i]];
+      }
+      const pos1 = picks[0];
+      const pos2 = picks[1];
+
+      // Pick 2 vowels (allowing duplicates is fine; set distinct if you prefer)
+      const v1 = VOWELLESS_VOWELS[Math.floor(rand() * VOWELLESS_VOWELS.length)];
+      const v2 = VOWELLESS_VOWELS[Math.floor(rand() * VOWELLESS_VOWELS.length)];
+
+      rolled[pos1] = String(v1).toUpperCase();
+      rolled[pos2] = String(v2).toUpperCase();
+
+      return rolled;
+    },
+
+    // e) XYZ: N–Z using frequency bag
+    weirdBuildXYZ(rand) {
+      const bag = WEIRD_FREQ_BAG.filter(ch => inRangeAZ(ch, "N", "Z"));
+      const rolled = [];
+      for (let i = 0; i < 16; i++) rolled.push(this.pickFromBag(rand, bag));
+      return rolled;
+    },
+
+    // ---------- UI helpers ----------
     isFoundSolution(wordUpper) {
       return this.foundSet.has(String(wordUpper).toLowerCase());
     },
@@ -794,7 +1024,6 @@ createApp({
 
       const root = this.trieRoot;
 
-      // Precompute neighbours for 16 cells
       const neighbours = Array.from({ length: 16 }, () => []);
       const id = (r, c) => r * 4 + c;
 
@@ -805,15 +1034,12 @@ createApp({
             for (let dc = -1; dc <= 1; dc++) {
               if (dr === 0 && dc === 0) continue;
               const rr = r + dr, cc = c + dc;
-              if (rr >= 0 && rr < 4 && cc >= 0 && cc < 4) {
-                neighbours[from].push(id(rr, cc));
-              }
+              if (rr >= 0 && rr < 4 && cc >= 0 && cc < 4) neighbours[from].push(id(rr, cc));
             }
           }
         }
       }
 
-      // Flatten tiles and normalise to lowercase strings
       const tiles = [];
       for (let r = 0; r < 4; r++) {
         for (let c = 0; c < 4; c++) {
@@ -832,9 +1058,8 @@ createApp({
           const n2 = n1.next["u"];
           if (!n2) return null;
           return n2;
-        } else {
-          return node.next[tileStr] || null;
         }
+        return node.next[tileStr] || null;
       };
 
       const appendStr = (word, tileStr) => word + (tileStr === "qu" ? "qu" : tileStr);
@@ -842,9 +1067,7 @@ createApp({
       const dfs = (pos, node, word) => {
         visited[pos] = true;
 
-        if (node.end && word.length >= 4) {
-          found.add(word);
-        }
+        if (node.end && word.length >= 4) found.add(word);
 
         for (const nb of neighbours[pos]) {
           if (visited[nb]) continue;
@@ -866,7 +1089,6 @@ createApp({
         dfs(start, firstNode, appendStr("", tileStr));
       }
 
-      // Sort by: score desc, length desc, alpha
       const list = Array.from(found);
       list.sort((a, b) => {
         const sa = this.scoreWord(a.length);
@@ -1175,7 +1397,7 @@ createApp({
             <span v-if="statusText" class="status"> {{ statusText }} · </span>
             Score: <span class="score">{{ displayScore }}</span>
             <button
-              v-if="gameOver"
+              v-if="gameOver && modeType"
               class="copybtn"
               type="button"
               @click="copyResults"
@@ -1203,9 +1425,9 @@ createApp({
             <span class="btn-meta">{{ currentSlotLabel2 }}</span>
           </button>
 
-          <button class="btn mini" type="button" @click="playRandom" :disabled="!dictReady">
-            <span class="btn-mode">Random</span>
-            <span class="btn-meta">Play</span>
+          <button class="btn mini" type="button" @click="playWeird" :disabled="!dictReady">
+            <span class="btn-mode">Weird</span>
+            <span class="btn-meta">{{ currentSlotLabel }}</span>
           </button>
         </div>
       </header>
@@ -1317,8 +1539,8 @@ createApp({
                 <ul class="help-list">
                   <li><b>Daily</b> — same board all day.</li>
                   <li><b>5-min</b> — board changes every 5 minutes.</li>
-                  <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes</li>
-                  <li><b>Random</b> — fresh board each time.</li>
+                  <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes.</li>
+                  <li><b>Weird</b> — rotates through special variants every 5 minutes (shown in the mode name).</li>
                 </ul>
 
                 <div class="help-text">
@@ -1350,8 +1572,7 @@ createApp({
             </li>
           </ul>
 
-          <!-- end-of-game controls -->
-          <div v-if="gameOver" style="margin-top: 12px;">
+          <div v-if="gameOver && modeType" style="margin-top: 12px;">
             <button
               class="btn"
               type="button"
