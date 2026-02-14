@@ -475,3 +475,253 @@ body {
   border-color: rgba(22, 163, 74, 0.22);
   background: rgba(22, 163, 74, 0.199);
 }
+
+/* HUD icon cluster (Achievements + Help) */
+.hud-icons{
+  display: grid;
+  grid-auto-flow: column;
+  gap: 10px;
+  align-items: start;
+  justify-content: end;
+}
+
+/* Achievements */
+.achievements{ position: relative; }
+
+.ach-btn{
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  cursor: pointer;
+  user-select: none;
+  line-height: 1;
+}
+
+.ach-btn:active{ transform: scale(0.96); }
+
+.ach-pop{
+  position: absolute;
+  right: 0;
+  top: calc(44px + 8px);
+  width: min(380px, calc(100vw - 40px));
+  max-height: min(70vh, 540px);
+  overflow: auto;
+
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 12px;
+  z-index: 12;
+}
+
+.ach-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ach-title{
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.ach-close{
+  border: 1px solid var(--btn-border);
+  background: transparent;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+.ach-close:active{ transform: scale(0.97); }
+
+.ach-section{
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(20,20,20,0.08);
+}
+
+.ach-section-title{
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.ach-section-sub{
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.ach-empty{
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 8px 10px;
+  border: 1px dashed rgba(20,20,20,0.18);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.6);
+}
+
+.ach-row{
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 10px;
+  align-items: center;
+
+  border: 1px solid rgba(20,20,20,0.10);
+  border-radius: 14px;
+  padding: 10px 10px;
+  background: #fff;
+}
+
+.ach-row.locked{
+  opacity: 0.55;
+  filter: grayscale(0.35);
+}
+
+.ach-emoji{
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(20,20,20,0.10);
+  background: rgba(255,255,255,0.7);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+.ach-name{
+  font-weight: 900;
+  font-size: 13.5px;
+}
+
+.ach-desc{
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.2px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.tiers{
+  display: grid;
+  grid-auto-flow: column;
+  gap: 6px;
+}
+
+.tier{
+  width: 30px;
+  height: 24px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 900;
+  border: 1px solid rgba(20,20,20,0.14);
+  background: rgba(255,255,255,0.7);
+  color: rgba(0,0,0,0.65);
+}
+
+/* Tier pills: OFF by default */
+.tiers .tier{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+
+  font-size: 12px;
+  font-weight: 900;
+
+  /* "off" look */
+  background: transparent;
+  border: 1px solid rgba(20,20,20,0.14);
+  color: rgba(0,0,0,0.45);
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+
+/* Tier pills: ON = coloured */
+.tiers .tier.on{
+  opacity: 1;
+  filter: none;
+  color: rgba(0,0,0,0.78);
+  border-color: rgba(0,0,0,0.18);
+}
+
+/* Tier colour hints (subtle; still greyable when locked) */
+.tier.bronze{ background: rgba(205, 127, 50, 0.18); }
+.tier.silver{ background: rgba(160, 160, 160, 0.18); }
+.tier.gold{ background: rgba(212, 175, 55, 0.18); }
+.tier.diamond{ background: rgba(59, 130, 246, 0.14); }
+
+/* Apply background colours only when ON */
+.tiers .tier.bronze.on  { background: rgba(205, 127, 50, 0.28); }
+.tiers .tier.silver.on  { background: rgba(192, 192, 192, 0.35); }
+.tiers .tier.gold.on    { background: rgba(212, 175, 55, 0.35); }
+.tiers .tier.diamond.on { background: rgba(147, 197, 253, 0.35); }
+
+
+.wordsmeta{
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.ach-stats{
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.help-version{
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(20,20,20,0.08);
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--muted);
+  text-align: right;
+  letter-spacing: 0.02em;
+}
+
+
+.tier.on{
+  opacity: 1;
+  border-color: rgba(0,0,0,0.25);
+  filter: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.ach-row:not(.locked) .ach-emoji{
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.22);
+}
+
+.ach-row.locked{
+  opacity: 0.65;
+}
+.ach-row.locked .tiers .tier.on{
+  opacity: 0.9; /* still visible if you want */
+}

@@ -181,14 +181,24 @@ createApp({
       maskRy: 14,
 
       helpOpen: false,
+      achievementsOpen: false,
 
       // Clock tick (for button label)
       now: new Date(),
-      clockId: null
+      clockId: null, 
+
+      // Achievements
+      achievementsOpen: false,
+      recentUnlocks: [], // messages shown after game ends
+      achState: null    // loaded achievements state
+
     };
   },
 
   computed: {
+    appVersion() {
+      return window.MOGGLE_VERSION || "dev";
+    },
     currentWord() {
       const parts = this.selectedPath.map(p => this.grid[p.row][p.col]);
       return parts
@@ -315,6 +325,7 @@ createApp({
     await this.loadDictionary();
 
     this.pruneFinishedSaves();
+    this.achState = this.loadAchievements();
 
     // Do not start a game on load; show placeholder.
     this.showPickModeBoard();
@@ -606,6 +617,343 @@ createApp({
       return true;
     },
 
+    // ---------- achievements storage ----------
+    achKey() { return "moggle:ach:v1"; },
+
+    defaultAchState() {
+      return {
+        v: 1,
+        hallOfFame: { words: [] },
+
+        daily: {
+          stats: { gamesPlayed: 0, wordsFound: 0 },
+          best: null, // { score, at, label, seed }
+          counters: {
+            beast: 0,
+            goose: 0,
+            wolf: 0,
+            tiger: 0,
+            trex: 0
+          }
+        },
+
+        longest: {
+          stats: { gamesPlayed: 0, wordsFound: 0 },
+          counters: {
+            lover: 0,
+            tadpole: 0,   // best len == 4
+            stingray: 0,  // best len == 7
+            anaconda: 0   // best len >= 8
+          }
+        },
+
+        weird: {
+          stats: { gamesPlayed: 0, wordsFound: 0 },
+          counters: {
+            survivor: 0,
+            abc30: 0,
+            nz30: 0,
+            lowvowel30: 0,
+            voweltacular30: 0,
+            hardhat8words: 0
+          }
+        }
+      };
+    },
+
+    loadAchievements() {
+      try {
+        const raw = localStorage.getItem(this.achKey());
+        if (!raw) return this.defaultAchState();
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.v !== 1) return this.defaultAchState();
+
+        // soft-migrate missing fields (so older saves don't break)
+        const d = this.defaultAchState();
+        const merged = {
+          ...d,
+          ...parsed,
+          hallOfFame: { ...d.hallOfFame, ...(parsed.hallOfFame || {}) },
+          daily: {
+            ...d.daily,
+            ...(parsed.daily || {}),
+            stats: { ...d.daily.stats, ...((parsed.daily || {}).stats || {}) },
+            counters: { ...d.daily.counters, ...((parsed.daily || {}).counters || {}) }
+          },
+          longest: {
+            ...d.longest,
+            ...(parsed.longest || {}),
+            stats: { ...d.longest.stats, ...((parsed.longest || {}).stats || {}) },
+            counters: { ...d.longest.counters, ...((parsed.longest || {}).counters || {}) }
+          },
+          weird: {
+            ...d.weird,
+            ...(parsed.weird || {}),
+            stats: { ...d.weird.stats, ...((parsed.weird || {}).stats || {}) },
+            counters: { ...d.weird.counters, ...((parsed.weird || {}).counters || {}) }
+          }
+        };
+
+        return merged;
+      } catch {
+        return this.defaultAchState();
+      }
+    },
+
+    saveAchievements(state) {
+      try {
+        localStorage.setItem(this.achKey(), JSON.stringify(state));
+      } catch (e) {
+        console.warn("Could not save achievements:", e);
+      }
+    },
+
+    achCount(area, key) {
+      const s = this.achState;
+      if (!s) return 0;
+      const counters = s?.[area]?.counters;
+      return Number(counters?.[key] ?? 0);
+    },
+
+    achTier(area, key) {
+      return this.tierLevelFromCount(this.achCount(area, key));
+    },    
+    formatAchDate(ts) {
+      if (!ts) return "-";
+
+      const d = new Date(ts);
+
+      const dd = String(d.getDate()).padStart(2, "0");
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const mon = months[d.getMonth()];
+      const yyyy = d.getFullYear();
+
+      return `${dd}-${mon}-${yyyy}`;
+    },
+    // ---------- tiers ----------
+    tierThresholds() { return [1, 10, 25, 50]; },
+
+    tierLevelFromCount(count) {
+      const n = Number(count || 0);
+      const t = this.tierThresholds();
+      if (n >= t[3]) return 4;
+      if (n >= t[2]) return 3;
+      if (n >= t[1]) return 2;
+      if (n >= t[0]) return 1;
+      return 0;
+    },
+
+    tierName(level) {
+      if (level === 1) return "Bronze";
+      if (level === 2) return "Silver";
+      if (level === 3) return "Gold";
+      if (level === 4) return "Diamond";
+      return "";
+    },
+
+    weirdVariantIdFromSeed(seedString) {
+      const parsed = this.parseSeed(seedString);
+      if (!parsed || parsed.kind !== "weird") return null;
+      const slotInfo = this.parseWeirdSlot(parsed.slot);
+      return slotInfo?.variantId || null;
+    },
+
+    // ---------- hall of fame ----------
+    addHallOfFameWords(state, wordsUpper, meta) {
+      const cap = 60;
+      const entries = [];
+
+      for (const w of wordsUpper) {
+        const word = String(w).toUpperCase();
+        const len = word.length;
+        if (len < 8) continue;
+
+        entries.push({
+          word,
+          len,
+          modeType: meta.modeType,
+          label: meta.label,
+          seed: meta.seed,
+          at: meta.at
+        });
+      }
+
+      if (!entries.length) return;
+
+      state.hallOfFame.words = entries.concat(state.hallOfFame.words);
+
+      // de-dupe by word+seed
+      const seen = new Set();
+      state.hallOfFame.words = state.hallOfFame.words.filter(e => {
+        const k = `${e.word}|${e.seed}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+
+      if (state.hallOfFame.words.length > cap) {
+        state.hallOfFame.words = state.hallOfFame.words.slice(0, cap);
+      }
+    },
+
+    // ---------- evaluator ----------
+    evaluateAchievementsOnGameEnd() {
+      const state = this.achState || this.loadAchievements();
+
+      const at = Date.now();
+      const label = this.modeLabel || "Game";
+      const seed = this.seedLabel || "";
+      const modeType = this.modeType || "";
+
+      const wordsThisGame = this.foundWords.length;
+
+      let bestLen = 0;
+      for (const w of this.foundWords) bestLen = Math.max(bestLen, String(w).length);
+
+      const weirdVariantId = (modeType === "weird") ? this.weirdVariantIdFromSeed(seed) : null;
+
+      const unlocks = [];
+
+      const bumpTiered = (before, after, title) => {
+        const b = this.tierLevelFromCount(before);
+        const a = this.tierLevelFromCount(after);
+        if (a > b) unlocks.push(`🏆 ${title} — ${this.tierName(a)}`);
+      };
+
+      // Daily
+      if (modeType === "daily") {
+        // Lifetime totals for popup
+        const beforeGames = state.daily.stats.gamesPlayed;
+        state.daily.stats.gamesPlayed += 1;
+        state.daily.stats.wordsFound += wordsThisGame;
+
+        // Daily Beast (tiered by games played)
+        {
+          const before = state.daily.counters.beast;
+          state.daily.counters.beast += 1;
+          bumpTiered(before, state.daily.counters.beast, "Daily Beast");
+        }
+
+        // Best record (not tiered)
+        const currentScore = this.score;
+        const prevBest = state.daily.best?.score ?? null;
+        if (prevBest === null || currentScore > prevBest) {
+          state.daily.best = { score: currentScore, at, label, seed };
+          unlocks.push(`🏆 New Daily best: ${currentScore} pts`);
+        }
+
+        // Tiered daily score achievements (per qualifying game)
+        if (currentScore <= 10) {
+          const before = state.daily.counters.goose;
+          state.daily.counters.goose += 1;
+          bumpTiered(before, state.daily.counters.goose, "Daily Goose");
+        }
+        if (currentScore >= 50) {
+          const before = state.daily.counters.wolf;
+          state.daily.counters.wolf += 1;
+          bumpTiered(before, state.daily.counters.wolf, "Daily Wolf");
+        }
+        if (currentScore >= 75) {
+          const before = state.daily.counters.tiger;
+          state.daily.counters.tiger += 1;
+          bumpTiered(before, state.daily.counters.tiger, "Daily Tiger");
+        }
+        if (currentScore >= 100) {
+          const before = state.daily.counters.trex;
+          state.daily.counters.trex += 1;
+          bumpTiered(before, state.daily.counters.trex, "Daily T-rex");
+        }
+      }
+
+      // Longest
+      if (modeType === "longest") {
+        state.longest.stats.gamesPlayed += 1;
+        state.longest.stats.wordsFound += wordsThisGame;
+
+        // Longest Lover (tiered by games played)
+        {
+          const before = state.longest.counters.lover;
+          state.longest.counters.lover += 1;
+          bumpTiered(before, state.longest.counters.lover, "Longest Lover");
+        }
+
+        if (bestLen === 4) {
+          const before = state.longest.counters.tadpole;
+          state.longest.counters.tadpole += 1;
+          bumpTiered(before, state.longest.counters.tadpole, "Tadpole");
+        }
+
+        if (bestLen === 7) {
+          const before = state.longest.counters.stingray;
+          state.longest.counters.stingray += 1;
+          bumpTiered(before, state.longest.counters.stingray, "Stingray");
+        }
+
+        if (bestLen >= 8) {
+          const before = state.longest.counters.anaconda;
+          state.longest.counters.anaconda += 1;
+          bumpTiered(before, state.longest.counters.anaconda, "Anaconda");
+        }
+      }
+
+      // Weird
+      if (modeType === "weird") {
+        state.weird.stats.gamesPlayed += 1;
+        state.weird.stats.wordsFound += wordsThisGame;
+
+        // Weird Survivor (tiered by games played)
+        {
+          const before = state.weird.counters.survivor;
+          state.weird.counters.survivor += 1;
+          bumpTiered(before, state.weird.counters.survivor, "Weird Survivor");
+        }
+
+        const currentScore = this.score;
+
+        if (weirdVariantId === "abc" && currentScore >= 30) {
+          const before = state.weird.counters.abc30;
+          state.weird.counters.abc30 += 1;
+          bumpTiered(before, state.weird.counters.abc30, "A–M Specialist");
+        }
+
+        if (weirdVariantId === "xyz" && currentScore >= 30) {
+          const before = state.weird.counters.nz30;
+          state.weird.counters.nz30 += 1;
+          bumpTiered(before, state.weird.counters.nz30, "Last drinks");
+        }
+
+        if (weirdVariantId === "vless" && currentScore >= 30) {
+          const before = state.weird.counters.lowvowel30;
+          state.weird.counters.lowvowel30 += 1;
+          bumpTiered(before, state.weird.counters.lowvowel30, "Low Vowel Wizard");
+        }
+
+        if (weirdVariantId === "vowel" && currentScore >= 30) {
+          const before = state.weird.counters.voweltacular30;
+          state.weird.counters.voweltacular30 += 1;
+          bumpTiered(before, state.weird.counters.voweltacular30, "Mole-tacular");
+        }
+
+        // Hard hat: 8+ words found on a single Hard board (variant hard)
+        if (weirdVariantId === "hard" && wordsThisGame >= 8) {
+          const before = state.weird.counters.hardhat8words;
+          state.weird.counters.hardhat8words += 1;
+          bumpTiered(before, state.weird.counters.hardhat8words, "Hard hat");
+        }
+      }
+
+      // Hall of fame: 8+ words (any mode)
+      const hofWords = this.foundWords.filter(w => String(w).length >= 8);
+      this.addHallOfFameWords(state, hofWords, { modeType, label, seed, at });
+
+      this.achState = state;
+      this.saveAchievements(state);
+
+      return unlocks;
+    },
+
+
+
     // ---------- timer ----------
     startTimer() {
       this.stopTimer();
@@ -635,11 +983,40 @@ createApp({
       this.clearSelection();
       this.showMessage("Time’s up!", "info");
 
+      // Achievements (based only on end-of-game summary)
+      this.recentUnlocks = this.evaluateAchievementsOnGameEnd();
+
       await this.solveBoard();
       this.showSolutions = false;
 
       this.saveFinishedCurrentGame();
+
     },
+
+    openAchievements() {
+      this.achievementsOpen = true;
+
+      this.$nextTick(() => {
+        const pop = this.$refs.achPop;
+        if (pop && pop.scrollIntoView) {
+          pop.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+
+      document.addEventListener("pointerdown", this.onOutsideAchievements, { once: true });
+    },
+
+    closeAchievements() { this.achievementsOpen = false; },
+
+    onOutsideAchievements(e) {
+      const achEl = this.$refs.achievements;
+      if (achEl && achEl.contains(e.target)) {
+        document.addEventListener("pointerdown", this.onOutsideAchievements, { once: true });
+        return;
+      }
+      this.closeAchievements();
+    },
+
 
     // ------------- help section handling ------------
     openHelp() {
@@ -1538,37 +1915,331 @@ createApp({
               {{ message || "\u00A0" }}
             </div>
 
-            <div class="help" ref="help">
-              <button
-                class="help-btn"
-                type="button"
-                @click="helpOpen ? closeHelp() : openHelp()"
-                aria-label="Help"
-                title="Help"
-              >
-                {{ helpOpen ? "×" : "?" }}
-              </button>
+            <div class="hud-icons">
+              <div class="achievements" ref="achievements">
+                <button
+                  class="ach-btn"
+                  type="button"
+                  @click="achievementsOpen ? closeAchievements() : openAchievements()"
+                  aria-label="Achievements"
+                  title="Achievements"
+                >
+                  🏆
+                </button>
+<!-- START ACHIEVEMENTS -->
+                <div v-if="achievementsOpen" class="ach-pop" ref="achPop">
+                  <div class="ach-header">
+                    <div class="ach-title">Achievements</div>
+                    <button class="ach-close" type="button" @click="closeAchievements()" aria-label="Close">
+                      ×
+                    </button>
+                  </div>
 
-              <div v-if="helpOpen" class="help-pop" ref="helpPop">
-                <div class="help-title">How to play</div>
-                <div class="help-text">
-                  Tap to select. Tap the first tile to clear. Tap the last tile to submit.
-                  Press and drag to draw a path.
-                </div>
+                  <!-- Words hall of fame -->
+                  <div class="ach-section">
+                    <div class="ach-section-title">🏆 Words hall of fame 🏆</div>
+                    <div class="ach-section-sub">8+ letters found (any mode)</div>
 
-                <div class="help-title" style="margin-top: 10px;">Modes</div>
-                <ul class="help-list">
-                  <li><b>Daily</b> — same board all day.</li>
-                  <li><b>5-min</b> — board changes every 5 minutes.</li>
-                  <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes.</li>
-                  <li><b>Weird</b> — rotates through special variants every 5 minutes (shown in the mode name).</li>
-                </ul>
+                    <div class="ach-empty">No 8+ words found yet.</div>
+                    <!-- Later: list items go here -->
+                  </div>
 
-                <div class="help-text">
-                  Tap the <span class="help-icon">⧉</span> button next to your score after the game ends to copy your results and share them.
+                  <!-- Daily -->
+                  <div class="ach-section">
+                    <div class="ach-section-title">Daily achievements</div>
+                    <div class="ach-stats" v-if="achState">
+                      Games played: <b>{{ achState.daily.stats.gamesPlayed }}</b> ·
+                      Words found: <b>{{ achState.daily.stats.wordsFound }}</b>
+                    </div>
+                    <div class="ach-row">
+                      <div class="ach-emoji">👑</div>
+
+                      <div class="ach-main">
+                        <div class="ach-name">Best ever score</div>
+
+                        <div class="ach-desc">
+                          <template v-if="achState && achState.daily && achState.daily.best">
+                            {{ achState.daily.best.score }} pts ·
+                            {{ formatAchDate(achState.daily.best.at) }}
+                          </template>
+                          <template v-else>
+                            -
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- Daily Beast (tiered by games played) -->
+                    <div class="ach-row" :class="{ locked: achCount('daily','beast') === 0 }">
+                      <div class="ach-emoji">🦁</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Daily Beast</div>
+                        <div class="ach-desc">Play Daily games</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('daily','beast') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('daily','beast') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('daily','beast') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('daily','beast') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('daily','goose') === 0 }">
+                      <div class="ach-emoji">🦢</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Goose</div>
+                        <div class="ach-desc">Daily score ≤ 10</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('daily','goose') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('daily','goose') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('daily','goose') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('daily','goose') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('daily','wolf') === 0 }">
+                      <div class="ach-emoji">🐺</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Wolf</div>
+                        <div class="ach-desc">Daily score ≥ 50</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('daily','wolf') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('daily','wolf') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('daily','wolf') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('daily','wolf') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('daily','tiger') === 0 }">
+                      <div class="ach-emoji">🐯</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Tiger</div>
+                        <div class="ach-desc">Daily score ≥ 75</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('daily','tiger') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('daily','tiger') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('daily','tiger') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('daily','tiger') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('daily','trex') === 0 }">
+                      <div class="ach-emoji">🦖</div>
+                      <div class="ach-main">
+                        <div class="ach-name">T-rex</div>
+                        <div class="ach-desc">Daily score ≥ 100</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('daily','trex') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('daily','trex') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('daily','trex') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('daily','trex') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+
+                  </div>
+
+                  <!-- Longest -->
+                  <div class="ach-section">
+                    <div class="ach-section-title">Longest achievements</div>
+                    <div class="ach-stats" v-if="achState">
+                      Games played: <b>{{ achState.longest.stats.gamesPlayed }}</b> 
+                   <!--   Words found: <b>{{ achState.longest.stats.wordsFound }}</b> -->
+                    </div>
+                    <div class="ach-row" :class="{ locked: achCount('longest','lover') === 0 }">
+                      <div class="ach-emoji">💛</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Longest Lover</div>
+                        <div class="ach-desc">Play Longest games</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('longest','lover') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('longest','lover') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('longest','lover') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('longest','lover') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('longest','tadpole') === 0 }">
+                      <div class="ach-emoji">🐸</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Tadpole</div>
+                        <div class="ach-desc">Longest best word length = 4</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('longest','tadpole') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('longest','tadpole') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('longest','tadpole') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('longest','tadpole') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('longest','stingray') === 0 }">
+                      <div class="ach-emoji">🦈</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Stingray</div>
+                        <div class="ach-desc">Longest best word length = 7</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('longest','stingray') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('longest','stingray') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('longest','stingray') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('longest','stingray') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('longest','anaconda') === 0 }">
+                      <div class="ach-emoji">🐍</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Anaconda</div>
+                        <div class="ach-desc">Longest best word length ≥ 8</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('longest','anaconda') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('longest','anaconda') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('longest','anaconda') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('longest','anaconda') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <!-- Weird -->
+                  <div class="ach-section">
+                    <div class="ach-section-title">Weird explorer achievements</div>
+                    <div class="ach-stats" v-if="achState">
+                      Games played: <b>{{ achState.weird.stats.gamesPlayed }}</b> ·
+                      Words found: <b>{{ achState.weird.stats.wordsFound }}</b>
+                    </div>
+                    <div class="ach-row" :class="{ locked: achCount('weird','survivor') === 0 }">
+                      <div class="ach-emoji">🌀</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Weird Survivor</div>
+                        <div class="ach-desc">Play Weird boards</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','survivor') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','survivor') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','survivor') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','survivor') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('weird','abc30') === 0 }">
+                      <div class="ach-emoji">🔤</div>
+                      <div class="ach-main">
+                        <div class="ach-name">A–M Specialist</div>
+                        <div class="ach-desc">Score 30+ on ABC board</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','abc30') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','abc30') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','abc30') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','abc30') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('weird','nz30') === 0 }">
+                      <div class="ach-emoji">🍸</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Last drinks</div>
+                        <div class="ach-desc">Score 30+ on N–Z board</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','nz30') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','nz30') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','nz30') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','nz30') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('weird','lowvowel30') === 0 }">
+                      <div class="ach-emoji">🧊</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Low Vowel Wizard</div>
+                        <div class="ach-desc">Score 30+ on Low vowels board</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','lowvowel30') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','lowvowel30') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','lowvowel30') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','lowvowel30') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('weird','hardhat8words') === 0 }">
+                      <div class="ach-emoji">👷</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Hard hat</div>
+                        <div class="ach-desc">Find 8+ words on a single Hard board</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','hardhat8words') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','hardhat8words') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','hardhat8words') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','hardhat8words') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                    <div class="ach-row" :class="{ locked: achCount('weird','voweltacular30') === 0 }">
+                      <div class="ach-emoji">🧬</div>
+                      <div class="ach-main">
+                        <div class="ach-name">Vowels</div>
+                        <div class="ach-desc">Score 30+ on Voweltacular board</div>
+                      </div>
+                      <div class="tiers">
+                        <span class="tier bronze"  :class="{ on: achTier('weird','voweltacular30') >= 1 }">1</span>
+                        <span class="tier silver"  :class="{ on: achTier('weird','voweltacular30') >= 2 }">10</span>
+                        <span class="tier gold"    :class="{ on: achTier('weird','voweltacular30') >= 3 }">25</span>
+                        <span class="tier diamond" :class="{ on: achTier('weird','voweltacular30') >= 4 }">50</span>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>  <!-- END ACHIEVEMENTS -->
+
+              </div>
+
+              <div class="help" ref="help">
+                <button
+                  class="help-btn"
+                  type="button"
+                  @click="helpOpen ? closeHelp() : openHelp()"
+                  aria-label="Help"
+                  title="Help"
+                >
+                  {{ helpOpen ? "×" : "?" }}
+                </button>
+
+                <div v-if="helpOpen" class="help-pop" ref="helpPop">
+                  <div class="help-title">How to play</div>
+                  <div class="help-text">
+                    Tap to select. Tap the first tile to clear. Tap the last tile to submit.
+                    Press and drag to draw a path.
+                  </div>
+
+                  <div class="help-title" style="margin-top: 10px;">Modes</div>
+                  <ul class="help-list">
+                    <li><b>Daily</b> — same board all day.</li>
+                    <li><b>5-min</b> — board changes every 5 minutes.</li>
+                    <li><b>Longest</b> — 1 minute; score is longest word length. Board changes every 2 minutes.</li>
+                    <li><b>Weird</b> — rotates through special variants every 5 minutes (shown in the mode name).</li>
+                  </ul>
+
+                  <div class="help-text">
+                    Tap the <span class="help-icon">⧉</span> button next to your score after the game ends to copy your results and share them.
+                  </div>
+                  <div class="help-version">
+                    Version: {{ appVersion }}
+                  </div>                  
                 </div>
               </div>
             </div>
+
+
           </div>
         </div>
 
@@ -1577,7 +2248,17 @@ createApp({
             <div class="found-title">Found</div>
             <div class="found-count">{{ foundWords.length }}</div>
           </div>
-
+          <div v-if="gameOver && recentUnlocks.length" class="unlock-panel">
+            <div class="unlock-title">Unlocked this game</div>
+            <ul class="unlock-list">
+              <li v-for="(u, i) in recentUnlocks.slice(0, 4)" :key="'u'+i" class="unlock-item">
+                {{ u }}
+              </li>
+            </ul>
+            <div v-if="recentUnlocks.length > 4" class="unlock-more">
+              +{{ recentUnlocks.length - 4 }} more
+            </div>
+          </div>
           <div v-if="foundWords.length === 0" class="found-empty">
             No words yet.
           </div>
