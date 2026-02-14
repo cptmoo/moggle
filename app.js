@@ -1986,7 +1986,7 @@ createApp({
                     <div class="ach-row" :class="{ locked: achCount('daily','goose') === 0 }">
                       <div class="ach-emoji">🦢</div>
                       <div class="ach-main">
-                        <div class="ach-name">Goose</div>
+                        <div class="ach-name">Daily Goose</div>
                         <div class="ach-desc">Daily score ≤ 10</div>
                       </div>
                       <div class="tiers">
@@ -2000,7 +2000,7 @@ createApp({
                     <div class="ach-row" :class="{ locked: achCount('daily','wolf') === 0 }">
                       <div class="ach-emoji">🐺</div>
                       <div class="ach-main">
-                        <div class="ach-name">Wolf</div>
+                        <div class="ach-name">Daily Wolf</div>
                         <div class="ach-desc">Daily score ≥ 50</div>
                       </div>
                       <div class="tiers">
@@ -2014,7 +2014,7 @@ createApp({
                     <div class="ach-row" :class="{ locked: achCount('daily','tiger') === 0 }">
                       <div class="ach-emoji">🐯</div>
                       <div class="ach-main">
-                        <div class="ach-name">Tiger</div>
+                        <div class="ach-name">Daily Tiger</div>
                         <div class="ach-desc">Daily score ≥ 75</div>
                       </div>
                       <div class="tiers">
@@ -2028,7 +2028,7 @@ createApp({
                     <div class="ach-row" :class="{ locked: achCount('daily','trex') === 0 }">
                       <div class="ach-emoji">🦖</div>
                       <div class="ach-main">
-                        <div class="ach-name">T-rex</div>
+                        <div class="ach-name">Daily T-rex</div>
                         <div class="ach-desc">Daily score ≥ 100</div>
                       </div>
                       <div class="tiers">
