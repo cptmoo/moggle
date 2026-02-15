@@ -308,6 +308,11 @@ createApp({
       }
 
       return "Show solutions (" + this.missedSolutions.length + " missed)";
+    },
+    hallWordsSorted(){
+      if (!this.achState?.hall?.words) return [];
+      return [...this.achState.hall.words]
+        .sort((a,b) => b.at - a.at);
     }
   },
 
@@ -369,7 +374,13 @@ createApp({
         this.showMessage("Could not copy results.", "bad");
       });
     },
-
+    hallModeLabel(modeType){
+      if (modeType === "official") return "5-min";
+      if (modeType === "longest") return "longest";
+      if (modeType === "daily") return "daily";
+      if (modeType === "weird") return "weird";
+      return String(modeType || "");
+    },
     // ---------- placeholder ----------
     showPickModeBoard() {
       this.grid = [
@@ -657,6 +668,10 @@ createApp({
             voweltacular30: 0,
             hardhat8words: 0
           }
+        }, 
+
+        hall: {
+          words: []
         }
       };
     },
@@ -730,6 +745,28 @@ createApp({
 
       return `${dd}-${mon}-${yyyy}`;
     },
+
+    recordHallWord(word){
+      if (!word || word.length < 8) return;
+
+      const upper = word.toUpperCase();
+
+      // prevent duplicates
+      const exists = this.achState.hall.words.some(
+        w => w.word === upper
+      );
+      if (exists) return;
+
+      this.achState.hall.words.push({
+        word: upper,
+        mode: this.modeType,
+        at: Date.now()
+      });
+
+      this.saveAchievements();
+    },
+
+
     // ---------- tiers ----------
     tierThresholds() { return [1, 10, 25, 50]; },
 
@@ -1780,6 +1817,7 @@ createApp({
       this.foundSet.add(word);
 
       this.showMessage(this.pickSuccessMessage(wordUpper.length), "good", 1100);
+      this.recordHallWord(wordUpper);
 
       this.clearSelection();
     }
@@ -1937,11 +1975,23 @@ createApp({
 
                   <!-- Words hall of fame -->
                   <div class="ach-section">
-                    <div class="ach-section-title">🏆 Words hall of fame 🏆</div>
+                    <div class="ach-section-title">
+                      🏆 Words hall of fame 🏆
+                    </div>
                     <div class="ach-section-sub">8+ letters found (any mode)</div>
 
-                    <div class="ach-empty">No 8+ words found yet.</div>
-                    <!-- Later: list items go here -->
+                    <div v-if="!achState || !achState.hall.words.length" class="ach-empty">
+                      No 8+ words found yet.
+                    </div>
+
+                    <ul v-else class="hall-list">
+                      <li v-for="w in hallWordsSorted" :key="w.word" class="hall-item">
+                        <div class="hall-word">{{ w.word }}</div>
+                        <div class="hall-meta">
+                          {{ hallModeLabel(w.mode) }} · {{ formatAchDate(w.at) }}
+                        </div>
+                      </li>
+                    </ul>
                   </div>
 
                   <!-- Daily -->
